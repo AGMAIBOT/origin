@@ -52,7 +52,7 @@ import config
 from constants import *
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler
-from utils import get_main_keyboard, send_long_message, get_actual_user_tier, require_verification, get_text_content_from_document, FileSizeError
+from utils import get_main_keyboard, send_long_message, get_actual_user_tier, require_verification, get_text_content_from_document, FileSizeError, inject_user_data
 from ai_clients.factory import get_ai_client_with_caps
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -62,7 +62,6 @@ async def get_user_db_id(update: Update): return await db.add_or_update_user(upd
 async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
     user_data = await db.get_user_by_id(user_id)
     ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
-    
     # <<< ГЛАВНОЕ ИЗМЕНЕНИЕ: Получаем не только клиент, но и его возможности >>>
     # Здесь мы определяем, какой системный промпт использовать
     char_name = ""
@@ -137,7 +136,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_html(text=welcome_text, reply_markup=get_main_keyboard())
 
 @require_verification
-async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@inject_user_data
+async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
     user_id = await get_user_db_id(update);
     if not user_id: return
     user_data = await db.get_user_by_id(user_id)
