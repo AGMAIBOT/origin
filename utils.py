@@ -1,3 +1,5 @@
+# utils.py
+
 import logging
 from datetime import datetime 
 from telegram import ReplyKeyboardMarkup, KeyboardButton, Update
@@ -8,41 +10,7 @@ import config
 # Импортируем нужные модули для новой функции
 import database as db
 from constants import TIER_FREE
-
 logger = logging.getLogger(__name__)
-
-def inject_user_data(func):
-    """
-    Декоратор, который:
-    1. Получает или создает пользователя в БД.
-    2. Извлекает его полные данные (user_data).
-    3. "Внедряет" user_data в качестве аргумента в оборачиваемую функцию.
-    4. Проверяет, что пользователь был успешно найден/создан.
-    """
-    @wraps(func)
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        # Шаг 1: Получаем или создаем пользователя, возвращаем его ID
-        user_id = await db.add_or_update_user(
-            update.effective_user.id,
-            update.effective_user.full_name,
-            update.effective_user.username
-        )
-        if not user_id:
-            # Если по какой-то причине пользователя не удалось создать, сообщаем об этом
-            message = update.message or update.callback_query.message
-            await message.reply_text("Произошла ошибка с вашим профилем. Попробуйте позже.")
-            return
-
-        # Шаг 2: Получаем полные данные пользователя
-        user_data = await db.get_user_by_id(user_id)
-        if not user_data:
-            message = update.message or update.callback_query.message
-            await message.reply_text("Не удалось загрузить данные вашего профиля.")
-            return
-        
-        # Шаг 3: Вызываем оригинальную функцию, передавая ей user_data
-        return await func(update, context, user_data=user_data, *args, **kwargs)
-    return wrapper
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     """Возвращает объект ReplyKeyboardMarkup с основными командами в две колонки."""
@@ -121,6 +89,40 @@ def require_verification(func):
             )
             return
     return wrapper
+
+# <<< ИЗМЕНЕНИЕ: Добавлен новый декоратор для внедрения данных пользователя >>>
+def inject_user_data(func):
+    """
+    Декоратор, который:
+    1. Получает или создает пользователя в БД.
+    2. Извлекает его полные данные (user_data).
+    3. "Внедряет" user_data в качестве аргумента в оборачиваемую функцию.
+    4. Проверяет, что пользователь был успешно найден/создан.
+    """
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        # Шаг 1: Гарантируем, что пользователь существует в БД и получаем его ID
+        user_id = await db.add_or_update_user(
+            update.effective_user.id,
+            update.effective_user.full_name,
+            update.effective_user.username
+        )
+        if not user_id:
+            message = update.message or update.callback_query.message
+            await message.reply_text("Произошла ошибка с вашим профилем. Попробуйте позже.")
+            return
+
+        # Шаг 2: Получаем полные данные пользователя по его ID
+        user_data = await db.get_user_by_id(user_id)
+        if not user_data:
+            message = update.message or update.callback_query.message
+            await message.reply_text("Не удалось загрузить данные вашего профиля.")
+            return
+        
+        # Шаг 3: Вызываем оригинальную функцию, передавая ей готовые user_data
+        return await func(update, context, user_data=user_data, *args, **kwargs)
+    return wrapper
+
 class FileSizeError(Exception):
     """Кастомное исключение для слишком больших файлов."""
     pass

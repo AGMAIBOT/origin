@@ -25,6 +25,9 @@ def parse_admin_ids(ids_string: str) -> List[int]:
 # Загружаем переменные из .env файла
 load_dotenv()
 
+loaded_gemini_key = os.getenv('GEMINI_API_KEY')
+print(f"--- DEBUG: Загружен ключ Gemini: {loaded_gemini_key} ---")
+
 logger.info("Проверка API ключей...")
 logger.info(f"Ключ Gemini: {'Найден' if os.getenv('GEMINI_API_KEY') else 'НЕ НАЙДЕН'}")
 logger.info(f"Ключ OpenAI: {'Найден' if os.getenv('OPENAI_API_KEY') else 'НЕ НАЙДЕН'}")
@@ -52,33 +55,29 @@ import config
 from constants import *
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler
+
+# <<< ИЗМЕНЕНИЕ: Добавили наш новый декоратор в импорты >>>
 from utils import get_main_keyboard, send_long_message, get_actual_user_tier, require_verification, get_text_content_from_document, FileSizeError, inject_user_data
 from ai_clients.factory import get_ai_client_with_caps
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-async def get_user_db_id(update: Update): return await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
+# <<< УДАЛЕНИЕ: Эта функция больше не нужна, т.к. ее логика переехала в декоратор >>>
+# async def get_user_db_id(update: Update): return await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
 
-async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
-    user_data = await db.get_user_by_id(user_id)
+# <<< ИЗМЕНЕНИЕ: Полностью переписана функция для реализации "Варианта 3" >>>
+async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
+    
+    # --- ЕДИНАЯ ЛОГИКА ПОЛУЧЕНИЯ ДАННЫХ ---
     ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
-    # <<< ГЛАВНОЕ ИЗМЕНЕНИЕ: Получаем не только клиент, но и его возможности >>>
-    # Здесь мы определяем, какой системный промпт использовать
-    char_name = ""
-    system_instruction = ""
-    is_generic_dialog = ai_provider not in [GEMINI_STANDARD]
-
-    if is_generic_dialog:
-        char_name = ai_provider
-        provider_names = {DEEPSEEK_CHAT: "DeepSeek", OPENROUTER_DEEPSEEK: "DeepSeek (via OpenRouter)", GPT_4_OMNI: "GPT-4o"}
-        provider_name = provider_names.get(ai_provider, "AI Assistant")
-        system_instruction = f"You are {provider_name}, a helpful and powerful AI assistant."
-    else: # Логика для Gemini
-        char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
-        custom_char = await db.get_custom_character_by_name(user_id, char_name)
-        system_instruction = custom_char['prompt'] if custom_char else ALL_PROMPTS.get(char_name, "Ты — полезный ассистент.")
+    user_id = user_data['id']
+    char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
+    
+    # Системный промпт определяется одинаково для всех AI
+    custom_char = await db.get_custom_character_by_name(user_id, char_name)
+    system_instruction = custom_char['prompt'] if custom_char else ALL_PROMPTS.get(char_name, "Ты — полезный ассистент.")
         
-    # Создаем клиент и получаем его "паспорт"
+    # --- ЕДИНАЯ ЛОГИКА СОЗДАНИЯ КЛИЕНТА И ПРОВЕРКИ ВОЗМОЖНОСТЕЙ ---
     try:
         caps = get_ai_client_with_caps(ai_provider, system_instruction)
         ai_client = caps.client
@@ -87,9 +86,9 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.message.reply_text(f"Ошибка конфигурации: {e}")
         return
 
-    # <<< НОВАЯ ЛОГИКА ПРОВЕРКИ ВОЗМОЖНОСТЕЙ >>>
+    # Проверки возможностей (vision, файлы)
     if is_photo and not caps.supports_vision:
-        await update.message.reply_text(f"К сожалению, выбранная модель AI не умеет обрабатывать изображения. Пожалуйста, переключитесь на Gemini или GPT-4o.")
+        await update.message.reply_text(f"К сожалению, выбранная модель AI не умеет обрабатывать изображения. Пожалуйста, переключитесь на модель с поддержкой vision.")
         return
         
     if is_document:
@@ -100,7 +99,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await update.message.reply_text(f"Файл слишком большой для этой модели. Максимум: {caps.file_char_limit} символов, в вашем файле: {document_char_count}.")
             return
 
-    # --- Дальнейший код почти без изменений ---
+    # --- ЕДИНАЯ ЛОГИКА РАБОТЫ С ИСТОРИЕЙ И ЗАПРОСОМ К AI ---
     history_len = await db.get_history_length(user_id, char_name)
     if history_len > config.HISTORY_LIMIT_TRIGGER:
         await db.trim_chat_history(user_id, char_name, config.HISTORY_TRIM_TO)
@@ -135,24 +134,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "Чтобы задать мне определенную роль или личность, воспользуйся меню <b>'Персонажи'</b>.")
     await update.message.reply_html(text=welcome_text, reply_markup=get_main_keyboard())
 
+# <<< ИЗМЕНЕНИЕ: Применили декораторы и переписали логику >>>
 @require_verification
 @inject_user_data
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
-    user_id = await get_user_db_id(update);
-    if not user_id: return
-    user_data = await db.get_user_by_id(user_id)
-    ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
-    
-    provider_names = {
-        GEMINI_STANDARD: user_data.get('current_character_name', DEFAULT_CHARACTER_NAME),
-        DEEPSEEK_CHAT: "DeepSeek",
-        GPT_4_OMNI: "GPT-4 Omni",
-        OPENROUTER_DEEPSEEK: "DeepSeek (OpenRouter)"
-    }
-    char_name_to_reset = ai_provider if ai_provider in [DEEPSEEK_CHAT, GPT_4_OMNI, OPENROUTER_DEEPSEEK] else provider_names[GEMINI_STANDARD]
-    display_name = provider_names.get(ai_provider, "Неизвестный режим")
+    # Логика теперь всегда едина: сбрасываем историю текущего персонажа
+    char_name_to_reset = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
+    display_name = char_name_to_reset
 
-    await db.clear_chat_history(user_id, char_name_to_reset)
+    await db.clear_chat_history(user_data['id'], char_name_to_reset)
     await update.message.reply_text(f"История диалога с *{escape_markdown(display_name, version=2)}* очищена\\.", parse_mode='MarkdownV2')
 
 @require_verification
@@ -178,27 +168,22 @@ async def set_subscription_command(update: Update, context: ContextTypes.DEFAULT
 async def show_wip_notice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Этот раздел находится в разработке.")
 
+# <<< ИЗМЕНЕНИЕ: Применили декоратор и упростили код >>>
 @require_verification
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # --- ШАГ 1: Проверка на специальные состояния (создание персонажа и т.д.) ---
-    # Если сообщение было обработано здесь, то дальше идти не нужно.
+@inject_user_data
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
+    # --- ШАГ 1: Проверка на специальные состояния (без изменений) ---
     if await characters_handler.handle_stateful_message(update, context):
         return
 
-    # --- ШАГ 2: Получение ID пользователя и проверка лимитов ---
-    # Этот блок должен идти ДО определения контента, так как он нужен для всех типов запросов.
-    user_id = await get_user_db_id(update)
-    if not user_id: return
-
-    user_data = await db.get_user_by_id(user_id)
+    # --- ШАГ 2: Проверка лимитов (теперь проще, т.к. user_data уже есть) ---
     tier_params = config.SUBSCRIPTION_TIERS[await get_actual_user_tier(user_data)]
     if tier_params['daily_limit'] is not None:
-        usage = await db.get_and_update_user_usage(user_id, tier_params['daily_limit'])
+        usage = await db.get_and_update_user_usage(user_data['id'], tier_params['daily_limit'])
         if not usage["can_request"]:
             return await update.message.reply_text(f"Достигнут дневной лимит для тарифа '{tier_params['name']}'.")
 
-    # --- ШАГ 3: Определяем тип контента (текст, фото или документ) ---
-    # Здесь мы используем правильную структуру if/elif/elif.
+    # --- ШАГ 3: Определяем тип контента (без изменений) ---
     user_content = None
     image_obj = None
     is_photo = False
@@ -226,14 +211,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- ШАГ 4: Отправляем запрос в AI, если контент был найден ---
     if not user_content:
-        # Если пользователь отправил что-то, что мы не обрабатываем (стикер, аудио), просто выходим
         return
 
-    # Теперь user_id здесь гарантированно определен и все флаги установлены
     await process_ai_request(
         update, 
         context, 
-        user_id, 
+        user_data, # Передаем готовые данные пользователя
         user_content, 
         is_photo=is_photo, 
         image_obj=image_obj, 
@@ -273,7 +256,7 @@ def main():
     
     app.add_handler(CallbackQueryHandler(button_callback_handler))
     
-    logger.info("Бот запущен и готов к работе (Архитектура: Мульти-AI)...")
+    logger.info("Бот запущен и готов к работе (Архитектура: Мульти-AI, Вариант 3)...")
     app.run_polling()
 
 if __name__ == "__main__":
