@@ -61,7 +61,7 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
     # --- Маршрутизация к OpenAI GPT ---
     elif provider_identifier == GPT_4_OMNI:
         if not OPENAI_API_KEY: raise ValueError("API ключ для OpenAI не найден.")
-        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name="gpt-4o")
+        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name="GPT_4_OMNI_MODEL")
         return AIClientCapabilities(
             client=client,
             supports_vision=True, 
@@ -71,7 +71,7 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
     # --- Заглушка для других GPT ---
     elif provider_identifier == GPT_3_5_TURBO:
         if not OPENAI_API_KEY: raise ValueError("API ключ для OpenAI не найден.")
-        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name="gpt-3.5-turbo")
+        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name="GPT_3_5_TURBO_MODEL")
         return AIClientCapabilities(client=client)
         
     else:
