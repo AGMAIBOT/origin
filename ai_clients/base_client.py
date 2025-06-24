@@ -22,17 +22,18 @@ class BaseAIClient(ABC):
         pass
 
     @abstractmethod
-    async def get_image_response(self, text_prompt: str, image: Image) -> Tuple[str, int]:
+    @abstractmethod
+    async def get_image_response(self, chat_history: List[Dict], text_prompt: str, image: Image) -> Tuple[str, int]:
         """
-        Получает текстовый ответ от AI на основе изображения и текста.
+        Получает текстовый ответ от AI на основе ИСТОРИИ, изображения и текста.
 
+        :param chat_history: История диалога в унифицированном формате.
         :param text_prompt: Текстовый запрос к изображению.
         :param image: Объект изображения PIL.Image.
         :return: Кортеж (текст_ответа: str, потрачено_токенов: int).
         """
         pass
     
-    @property
     @abstractmethod
     def supports_characters(self) -> bool:
         """Возвращает True, если клиент поддерживает кастомные промпты персонажей."""

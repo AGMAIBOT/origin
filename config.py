@@ -6,7 +6,7 @@
 # Имена моделей, которые мы используем. Легко поменять в одном месте.
 GEMINI_MODEL = "gemini-1.5-flash-latest"
 DEEPSEEK_CHAT_MODEL = "deepseek/deepseek-r1-0528-qwen3-8b:free"
-GPT_4_OMNI_MODEL = "gpt-4o"
+GPT_4_OMNI_MODEL = "gpt-4.1-nano"
 GPT_3_5_TURBO_MODEL = "gpt-3.5-turbo"
 GEMINI_2_FLASH_EXP_MODEL = "google/gemini-2.0-flash-exp:free"
 
