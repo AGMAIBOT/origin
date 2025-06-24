@@ -22,7 +22,6 @@ class BaseAIClient(ABC):
         pass
 
     @abstractmethod
-    @abstractmethod
     async def get_image_response(self, chat_history: List[Dict], text_prompt: str, image: Image) -> Tuple[str, int]:
         """
         Получает текстовый ответ от AI на основе ИСТОРИИ, изображения и текста.

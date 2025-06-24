@@ -3,7 +3,7 @@
 import logging
 from typing import List, Dict, Tuple
 from PIL.Image import Image
-from openai import AsyncOpenAI  # Используем асинхронный клиент OpenAI
+from openai import AsyncOpenAI, Timeout  # Используем асинхронный клиент OpenAI
 
 from .base_client import BaseAIClient
 
@@ -18,7 +18,9 @@ class DeepSeekClient(BaseAIClient):
         # но указываем свой base_url и ключ.
         self._client = AsyncOpenAI(
             api_key=api_key,
-            base_url="https://api.deepseek.com/v1"
+            base_url="https://api.deepseek.com/v1",
+            # Устанавливаем таймаут
+            timeout=Timeout(60.0)
         )
         self._model_name = model_name
         self._system_instruction = {"role": "system", "content": system_instruction}

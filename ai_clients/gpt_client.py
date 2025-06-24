@@ -3,7 +3,7 @@
 import logging
 from typing import List, Dict, Tuple
 from PIL.Image import Image
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, Timeout
 import base64
 from io import BytesIO
 
@@ -33,7 +33,11 @@ class GPTClient(BaseAIClient):
         """
         Конструктор класса. Инициализирует клиент OpenAI и сохраняет настройки.
         """
-        self._client = AsyncOpenAI(api_key=api_key)
+        self._client = AsyncOpenAI(
+            api_key=api_key,
+            # Устанавливаем таймаут в 60 секунд. Этого должно хватить для большинства запросов.
+            timeout=Timeout(60.0) 
+        )
         self._model_name = model_name
         self._system_instruction = {"role": "system", "content": system_instruction}
         logger.info(f"Клиент OpenAI GPT инициализирован с моделью: '{model_name}'.")
@@ -62,24 +66,25 @@ class GPTClient(BaseAIClient):
             logger.error(f"Ошибка от OpenAI API: {e}", exc_info=True)
             return f"Произошла ошибка при обращении к GPT: {e}", 0
 
-    async def get_image_response(self, text_prompt: str, image: Image) -> Tuple[str, int]:
-        """Получает текстовый ответ от GPT-4 Omni на основе изображения и текста."""
+    async def get_image_response(self, chat_history: List[Dict], text_prompt: str, image: Image) -> Tuple[str, int]:
         logger.info(f"Запрос к GPT Vision с моделью {self._model_name}")
         base64_image = _pil_to_base64(image)
         
-        messages = [
-            self._system_instruction,
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": text_prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                    }
-                ]
-            }
-        ]
+        messages = [self._system_instruction]
+        
+        for msg in chat_history:
+            if not (msg.get("parts") and msg["parts"][0]):
+                continue
+            role = "assistant" if msg["role"] == "model" else msg["role"]
+            messages.append({"role": role, "content": msg["parts"][0]})
+            
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": text_prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+            ]
+        })
 
         try:
             response = await self._client.chat.completions.create(

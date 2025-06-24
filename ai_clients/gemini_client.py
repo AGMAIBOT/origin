@@ -73,11 +73,14 @@ class GeminiClient(BaseAIClient):
             # Перебрасываем ошибку выше, чтобы ее обработал main.py и сообщил пользователю
             raise
 
-    async def get_image_response(self, text_prompt: str, image: Image) -> Tuple[str, int]:
+    async def get_image_response(self, chat_history: List[Dict], text_prompt: str, image: Image) -> Tuple[str, int]:
+        full_request_content = chat_history + [
+            {"role": "user", "parts": [text_prompt, image]}
+        ]
+
         try:
-            response = await self._vision_model.generate_content_async([text_prompt, image])
+            response = await self._vision_model.generate_content_async(full_request_content)
             
-            # Точно такая же проверка для изображений
             if not response.parts:
                 finish_reason = response.candidates[0].finish_reason if response.candidates else "UNKNOWN"
                 if finish_reason == generation_types.FinishReason.SAFETY:

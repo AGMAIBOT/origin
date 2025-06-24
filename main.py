@@ -109,7 +109,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         chat_history = await db.get_chat_history(user_id, char_name, limit=config.DEFAULT_HISTORY_LIMIT)
         
         if is_photo and image_obj:
-            response_text, _ = await ai_client.get_image_response(user_content, image_obj)
+            response_text, _ = await ai_client.get_image_response(chat_history, user_content, image_obj)
             db_user_content = f"[Изображение] {user_content}"
         else:
             response_text, _ = await ai_client.get_text_response(chat_history, user_content)
