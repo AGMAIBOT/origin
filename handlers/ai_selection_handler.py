@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 
 import database as db
-from constants import TIER_PRO, GEMINI_STANDARD, OPENROUTER_DEEPSEEK, GPT_4_OMNI
+from constants import TIER_PRO, GEMINI_STANDARD, OPENROUTER_DEEPSEEK, GPT_4_OMNI, OPENROUTER_GEMINI_2_FLASH
 
 # <<< НОВАЯ ФУНКЦИЯ: Показывает главный хаб выбора режима AI >>>
 async def show_ai_mode_selection_hub(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -42,9 +42,10 @@ async def show_text_ai_selection_menu(update: Update, context: ContextTypes.DEFA
     )
     
     keyboard = [
-        [InlineKeyboardButton(("✅ " if current_provider == GEMINI_STANDARD else "") + "Gemini (креативный, vision)", callback_data=f"select_ai_{GEMINI_STANDARD}")],
-        [InlineKeyboardButton(("✅ " if current_provider == OPENROUTER_DEEPSEEK else "") + "DeepSeek (через OpenRouter)", callback_data=f"select_ai_{OPENROUTER_DEEPSEEK}")],
         [InlineKeyboardButton(("✅ " if current_provider == GPT_4_OMNI else "") + "GPT-4 Omni (мощный)", callback_data=f"select_ai_{GPT_4_OMNI}")],
+        [InlineKeyboardButton(("✅ " if current_provider == GEMINI_STANDARD else "") + "Gemini (креативный, vision)", callback_data=f"select_ai_{GEMINI_STANDARD}")],
+        [InlineKeyboardButton(("✅ " if current_provider == OPENROUTER_GEMINI_2_FLASH else "") + "Gemini 2.0 Flash (экспериментальный)", callback_data=f"select_ai_{OPENROUTER_GEMINI_2_FLASH}")],
+        [InlineKeyboardButton(("✅ " if current_provider == OPENROUTER_DEEPSEEK else "") + "DeepSeek (через OpenRouter)", callback_data=f"select_ai_{OPENROUTER_DEEPSEEK}")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_ai_mode_hub")]
     ]
     
@@ -96,15 +97,15 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
         await set_ai_provider(user_id, new_provider)
         
         provider_names = {
-            GEMINI_STANDARD: "Gemini",
+            GEMINI_STANDARD: "Gemini 1.5 Flash",
             OPENROUTER_DEEPSEEK: "DeepSeek (OpenRouter)",
-            GPT_4_OMNI: "GPT-4 Omni"
+            GPT_4_OMNI: "GPT-4 Omni",
+            OPENROUTER_GEMINI_2_FLASH: "Gemini 2.0 Flash (экспериментальный)"
         }
         provider_name = provider_names.get(new_provider, "Неизвестная модель")
         
         await query.answer(f"Выбрана модель: {provider_name}")
         
-        # Обновляем сообщение с меню, чтобы галочка передвинулась
         try:
             await show_text_ai_selection_menu(update, context)
         except BadRequest as e:

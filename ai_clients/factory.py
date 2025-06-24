@@ -50,11 +50,25 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
             file_char_limit=config.FILE_PROCESSING_LIMITS.get(provider_identifier, 0)
         )
     
-    # --- Маршрутизация к OpenRouter ---
+    # --- Маршрутизация к OpenRouter DEEPSEEK---
     elif provider_identifier == OPENROUTER_DEEPSEEK:
         if not OPENROUTER_API_KEY: raise ValueError("API ключ для OpenRouter не найден.")
         client = OpenRouterClient(api_key=OPENROUTER_API_KEY, system_instruction=system_instruction, model_name=config.DEEPSEEK_CHAT_MODEL)
         return AIClientCapabilities(client=client)
+    
+    # --- Маршрутизация к OpenRouter GEMINI 2.0 flash exper---
+    elif provider_identifier == OPENROUTER_GEMINI_2_FLASH:
+        if not OPENROUTER_API_KEY: raise ValueError("API ключ для OpenRouter не найден.")
+        client = OpenRouterClient(
+            api_key=OPENROUTER_API_KEY, 
+            system_instruction=system_instruction, 
+            model_name=config.GEMINI_2_FLASH_EXP_MODEL # Используем переменную из config
+        )
+        return AIClientCapabilities(
+            client=client,
+            supports_vision=False, # OpenRouterClient пока не поддерживает vision
+            file_char_limit=config.FILE_PROCESSING_LIMITS.get(provider_identifier, 0)
+        )
 
     # --- Маршрутизация к OpenAI GPT ---
     elif provider_identifier == GPT_4_OMNI:
