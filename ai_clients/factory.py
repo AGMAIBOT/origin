@@ -31,9 +31,7 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
     if provider_identifier == GEMINI_STANDARD:
         if not GEMINI_API_KEY: raise ValueError("API ключ для Gemini не найден.")
         
-        # Просто берем единственную модель Gemini из конфига.
         model_name = config.GEMINI_MODEL
-        
         client = GeminiClient(api_key=GEMINI_API_KEY, system_instruction=system_instruction, model_name=model_name, vision_model_name=model_name)
         
         return AIClientCapabilities(
@@ -61,7 +59,8 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
     # --- Маршрутизация к OpenAI GPT ---
     elif provider_identifier == GPT_4_OMNI:
         if not OPENAI_API_KEY: raise ValueError("API ключ для OpenAI не найден.")
-        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name="GPT_4_OMNI_MODEL")
+        # <<< ИСПРАВЛЕНИЕ: Убраны кавычки, теперь это ссылка на переменную из config >>>
+        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name=config.GPT_4_OMNI_MODEL)
         return AIClientCapabilities(
             client=client,
             supports_vision=True, 
@@ -71,9 +70,9 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
     # --- Заглушка для других GPT ---
     elif provider_identifier == GPT_3_5_TURBO:
         if not OPENAI_API_KEY: raise ValueError("API ключ для OpenAI не найден.")
-        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name="GPT_3_5_TURBO_MODEL")
+        # <<< ИСПРАВЛЕНИЕ: Убраны кавычки и здесь >>>
+        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name=config.GPT_3_5_TURBO_MODEL)
         return AIClientCapabilities(client=client)
         
     else:
-        # Если ни один из if/elif не сработал, вызываем ошибку.
         raise ValueError(f"Неизвестный или неподдерживаемый идентификатор провайдера: '{provider_identifier}'")
