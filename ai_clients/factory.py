@@ -77,7 +77,7 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
         client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name=config.GPT_4_OMNI_MODEL)
         return AIClientCapabilities(
             client=client,
-            supports_vision=True, 
+            supports_vision=True, # <-- Меняем False на True
             file_char_limit=config.FILE_PROCESSING_LIMITS.get(provider_identifier, 0)
         )
     

@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Tuple
 from PIL.Image import Image
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 import config # Импортируем наш конфиг
 from .base_client import BaseAIClient
@@ -55,6 +55,17 @@ class OpenRouterClient(BaseAIClient):
             
             return response_text, tokens_spent
             
+        except RateLimitError as e:
+            logger.warning(f"Достигнут Rate Limit для модели {self._model_name} через OpenRouter: {e}")
+            
+            # Пытаемся извлечь детальное сообщение от OpenRouter для пользователя
+            error_details = "Сервер временно перегружен, попробуйте позже."
+            if e.body and 'error' in e.body and e.body['error'].get('metadata', {}).get('raw'):
+                error_details = f"Ошибка от провайдера: {e.body['error']['metadata']['raw']}"
+            
+            # Возвращаем пользователю понятное сообщение вместо падения бота
+            return f"😔 К сожалению, модель сейчас недоступна. {error_details}", 0
+
         except Exception as e:
             logger.error(f"Ошибка от OpenRouter API: {e}", exc_info=True)
             return f"Произошла ошибка при обращении к OpenRouter: {e}", 0

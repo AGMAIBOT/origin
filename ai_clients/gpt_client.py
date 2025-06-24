@@ -1,55 +1,79 @@
-# ai_clients/gpt_client.py (НОВЫЙ ФАЙЛ)
-
 import logging
 from typing import List, Dict, Tuple
 from PIL.Image import Image
 from openai import AsyncOpenAI
 
+# <<< НОВЫЕ ИМПОРТЫ для работы с изображениями >>>
+import base64
+from io import BytesIO
+
 from .base_client import BaseAIClient
 
 logger = logging.getLogger(__name__)
 
-class GPTClient(BaseAIClient):
-    @property
-    def supports_characters(self) -> bool:
-        return False
-    
-    def __init__(self, api_key: str, system_instruction: str, model_name: str):
-        # Для OpenAI мы используем стандартный клиент без указания base_url
-        self._client = AsyncOpenAI(api_key=api_key)
-        self._model_name = model_name
-        self._system_instruction = {"role": "system", "content": system_instruction}
-        logger.info(f"Клиент OpenAI GPT инициализирован с моделью: '{model_name}'.")
+# <<< НОВАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ >>>
+def _pil_to_base64(image: Image) -> str:
+    """Конвертирует объект PIL Image в строку Base64."""
+    # Создаем буфер в памяти
+    buffered = BytesIO()
+    # Конвертируем изображение в RGB, если у него есть альфа-канал (прозрачность),
+    # так как JPEG не поддерживает его.
+    if image.mode == 'RGBA':
+        image = image.convert('RGB')
+    # Сохраняем изображение в буфер в формате JPEG.
+    # Это уменьшает размер передаваемых данных.
+    image.save(buffered, format="JPEG")
+    # Получаем байты из буфера и кодируем их в Base64.
+    img_bytes = buffered.getvalue()
+    return base64.b64encode(img_bytes).decode('utf-8')
 
-    async def get_text_response(self, chat_history: List[Dict], user_prompt: str) -> Tuple[str, int]:
-        messages = [self._system_instruction]
-        for msg in chat_history:
-            if not (msg.get("parts") and msg["parts"][0]):
-                continue
-            
-            role = "assistant" if msg["role"] == "model" else msg["role"]
-            messages.append({"role": role, "content": msg["parts"][0]})
+
+class GPTClient(BaseAIClient):
+    # ... (init и supports_characters без изменений) ...
+
+    # ... (get_text_response без изменений) ...
+
+    # <<< ПОЛНОСТЬЮ ПЕРЕПИСАННЫЙ МЕТОД get_image_response >>>
+    async def get_image_response(self, text_prompt: str, image: Image) -> Tuple[str, int]:
+        """
+        Получает текстовый ответ от GPT-4 Omni на основе изображения и текста.
+        """
+        logger.info(f"Запрос к GPT Vision с моделью {self._model_name}")
+        base64_image = _pil_to_base64(image)
         
-        messages.append({"role": "user", "content": user_prompt})
+        # Формируем сообщение в формате, который ожидает OpenAI API для vision
+        messages = [
+            self._system_instruction,
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": text_prompt
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            # Передаем изображение напрямую в формате Base64
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            }
+        ]
 
         try:
             response = await self._client.chat.completions.create(
                 model=self._model_name,
-                messages=messages
+                messages=messages,
+                max_tokens=2048 # Можно задать лимит на токены в ответе
             )
             
             response_text = response.choices[0].message.content
-            tokens_spent = response.usage.total_tokens
+            tokens_spent = response.usage.total_tokens if response.usage else 0
             
             return response_text, tokens_spent
             
         except Exception as e:
-            logger.error(f"Ошибка от OpenAI API: {e}", exc_info=True)
-            return f"Произошла ошибка при обращении к GPT: {e}", 0
-
-    async def get_image_response(self, text_prompt: str, image: Image) -> Tuple[str, int]:
-        # GPT-4 Omni (и другие vision-модели OpenAI) поддерживают изображения,
-        # но формат запроса отличается. Для простоты сейчас мы сделаем заглушку,
-        # как и для DeepSeek. Полноценную поддержку можно будет добавить позже.
-        logger.warning("Попытка использовать обработку изображений с GPT, которая пока не реализована в этом клиенте.")
-        return "К сожалению, обработка изображений для моделей GPT в данный момент не реализована в боте.", 0
+            logger.error(f"Ошибка от OpenAI Vision API: {e}", exc_info=True)
+            return f"Произошла ошибка при обращении к GPT Vision: {e}", 0
