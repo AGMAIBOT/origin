@@ -7,6 +7,7 @@ STATE_WAITING_FOR_NEW_CHAR_NAME = 1
 STATE_WAITING_FOR_NEW_CHAR_PROMPT = 2
 STATE_EDITING_CHAR_NAME = 3
 STATE_EDITING_CHAR_PROMPT = 4
+STATE_WAITING_FOR_IMAGE_PROMPT = 5
 
 # --- Константы для ключей в context.user_data ---
 # Это внутренние ключи, на которые завязан код.
@@ -16,6 +17,7 @@ CURRENT_CHAR_CATEGORY_KEY = "current_character_category"
 TEMP_CHAR_ID = "temp_char_id"
 TEMP_CHAR_NAME = "temp_char_name"
 TEMP_CHAR_PROMPT = "temp_char_prompt"
+CURRENT_IMAGE_GEN_PROVIDER_KEY = "current_image_gen_provider"
 
 # Ключи для пагинации
 CURRENT_CHAR_VIEW_PAGE_KEY = "current_character_view_page"
@@ -36,3 +38,5 @@ GPT_3_5_TURBO = "gpt_3_5_turbo"
 GPT_4_OMNI = "gpt_4_omni"
 OPENROUTER_DEEPSEEK = "openrouter_deepseek"
 OPENROUTER_GEMINI_2_FLASH = "openrouter_gemini_2_flash"
+IMAGE_GEN_DALL_E_3 = "image_gen_dalle3"
+IMAGE_GEN_YANDEXART = "image_gen_yandexart"
