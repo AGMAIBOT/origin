@@ -4,9 +4,8 @@ import logging
 from typing import List, Dict, Tuple
 from PIL.Image import Image
 from openai import AsyncOpenAI, Timeout  # Используем асинхронный клиент OpenAI
-
 from .base_client import BaseAIClient
-
+from .aiutils import prepare_openai_history
 logger = logging.getLogger(__name__)
 
 class DeepSeekClient(BaseAIClient):
@@ -20,26 +19,16 @@ class DeepSeekClient(BaseAIClient):
             timeout=Timeout(60.0)
         )
         self._model_name = model_name
-        self._system_instruction = {"role": "system", "content": system_instruction}
+        self._system_instruction_content = system_instruction
         logger.info(f"Клиент DeepSeek инициализирован с моделью: '{model_name}'.")
 
     async def get_text_response(self, chat_history: List[Dict], user_prompt: str) -> Tuple[str, int]:
-        # Формат истории для OpenAI-совместимых API отличается от Gemini
-        # Нам нужно преобразовать наш формат [{'role': 'user', 'parts': ['text']}]
-        # в формат OpenAI [{'role': 'user', 'content': 'text'}]
         
-        messages = [self._system_instruction]
-        for msg in chat_history:
-            # Пропускаем возможные "пустые" сообщения
-            if not (msg.get("parts") and msg["parts"][0]):
-                continue
-
-            # <<< КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Преобразуем роль 'model' в 'assistant' >>>
-            role = "assistant" if msg["role"] == "model" else msg["role"]
-            
-            messages.append({"role": role, "content": msg["parts"][0]})
-        
-        messages.append({"role": "user", "content": user_prompt})
+        messages = prepare_openai_history(
+            system_instruction_content=self._system_instruction_content,
+            chat_history=chat_history,
+            user_prompt=user_prompt
+        )
 
         try:
             response = await self._client.chat.completions.create(
@@ -54,7 +43,6 @@ class DeepSeekClient(BaseAIClient):
             
         except Exception as e:
             logger.error(f"Ошибка от DeepSeek API: {e}", exc_info=True)
-            # Возвращаем дружелюбное сообщение об ошибке
             return f"Произошла ошибка при обращении к DeepSeek: {e}", 0
 
     async def get_image_response(self, text_prompt: str, image: Image) -> Tuple[str, int]:

@@ -8,7 +8,7 @@ import base64
 from io import BytesIO
 
 from .base_client import BaseAIClient
-
+from .aiutils import prepare_openai_history
 logger = logging.getLogger(__name__)
 
 def _pil_to_base64(image: Image) -> str:
@@ -22,32 +22,26 @@ def _pil_to_base64(image: Image) -> str:
 
 
 class GPTClient(BaseAIClient):
-    
-    # V-- ВОТ НЕДОСТАЮЩИЙ БЛОК, КОТОРЫЙ НУЖНО ДОБАВИТЬ --V
     def __init__(self, api_key: str, system_instruction: str, model_name: str):
-        """
-        Конструктор класса. Инициализирует клиент OpenAI и сохраняет настройки.
-        """
         self._client = AsyncOpenAI(
             api_key=api_key,
-            # Устанавливаем таймаут в 60 секунд. Этого должно хватить для большинства запросов.
             timeout=Timeout(60.0) 
         )
         self._model_name = model_name
-        self._system_instruction = {"role": "system", "content": system_instruction}
+        # <<< ИЗМЕНЕНИЕ: Сохраняем только текст инструкции >>>
+        self._system_instruction_content = system_instruction
         logger.info(f"Клиент OpenAI GPT инициализирован с моделью: '{model_name}'.")
+
     # ^-- КОНЕЦ БЛОКА, КОТОРЫЙ НУЖНО БЫЛО ДОБАВИТЬ --^
     
     async def get_text_response(self, chat_history: List[Dict], user_prompt: str) -> Tuple[str, int]:
-        """Получает текстовый ответ от AI."""
-        messages = [self._system_instruction]
-        for msg in chat_history:
-            if not (msg.get("parts") and msg["parts"][0]):
-                continue
-            role = "assistant" if msg["role"] == "model" else msg["role"]
-            messages.append({"role": role, "content": msg["parts"][0]})
         
-        messages.append({"role": "user", "content": user_prompt})
+        # <<< ИЗМЕНЕНИЕ: Заменяем дублирующийся код на вызов утилиты >>>
+        messages = prepare_openai_history(
+            system_instruction_content=self._system_instruction_content,
+            chat_history=chat_history,
+            user_prompt=user_prompt
+        )
 
         try:
             response = await self._client.chat.completions.create(
@@ -65,13 +59,17 @@ class GPTClient(BaseAIClient):
         logger.info(f"Запрос к GPT Vision с моделью {self._model_name}")
         base64_image = _pil_to_base64(image)
         
-        messages = [self._system_instruction]
-        
-        for msg in chat_history:
-            if not (msg.get("parts") and msg["parts"][0]):
-                continue
-            role = "assistant" if msg["role"] == "model" else msg["role"]
-            messages.append({"role": role, "content": msg["parts"][0]})
+        # <<< ИЗМЕНЕНИЕ: Тут тоже готовим историю через утилиту, но без последнего запроса пользователя >>>
+        # Так как формат запроса с картинкой другой, мы вызовем нашу утилиту немного иначе.
+        # Это показывает гибкость нашего подхода.
+        messages = prepare_openai_history(
+            system_instruction_content=self._system_instruction_content,
+            chat_history=chat_history,
+            user_prompt="" # Передаем пустой промпт, т.к. добавим его ниже в специальном формате
+        )
+        # Удаляем последний пустой элемент, если он создался
+        if not messages[-1]["content"]:
+            messages.pop()
             
         messages.append({
             "role": "user",
