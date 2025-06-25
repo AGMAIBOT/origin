@@ -1,4 +1,4 @@
-# main.py
+# main.py (ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
 
 import os
 import logging
@@ -25,15 +25,19 @@ def parse_admin_ids(ids_string: str) -> List[int]:
 # Загружаем переменные из .env файла
 load_dotenv()
 
+
 loaded_gemini_key = os.getenv('GEMINI_API_KEY')
 print(f"--- DEBUG: Загружен ключ Gemini: {loaded_gemini_key} ---")
-
 logger.info("Проверка API ключей...")
 logger.info(f"Ключ Gemini: {'Найден' if os.getenv('GEMINI_API_KEY') else 'НЕ НАЙДЕН'}")
 logger.info(f"Ключ OpenAI: {'Найден' if os.getenv('OPENAI_API_KEY') else 'НЕ НАЙДЕН'}")
 logger.info(f"Ключ DeepSeek: {'Найден' if os.getenv('DEEPSEEK_API_KEY') else 'НЕ НАЙДЕН'}")
 logger.info(f"Ключ OpenRouter: {'Найден' if os.getenv('OPENROUTER_API_KEY') else 'НЕ НАЙДЕН'}")
+logger.info(f"Ключ Yandex OAuth: {'Найден' if os.getenv('YANDEX_OAUTH_TOKEN') else 'НЕ НАЙДЕН'}")
+yandex_ok = bool(os.getenv('YANDEX_OAUTH_TOKEN')) and bool(os.getenv('YANDEX_FOLDER_ID'))
+logger.info(f"Ключи Yandex (OAuth+FolderID): {'Найдены' if yandex_ok else 'НЕ НАЙДЕНЫ'}")
 
+# <<< ИЗМЕНЕНИЕ: Полный блок определения ADMIN_IDS >>>
 admin_ids_from_env = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = parse_admin_ids(admin_ids_from_env)
 
@@ -62,12 +66,12 @@ from handlers import character_menus, characters_handler, profile_handler, captc
 
 from utils import get_main_keyboard, send_long_message, get_actual_user_tier, require_verification, get_text_content_from_document, FileSizeError, inject_user_data
 from ai_clients.factory import get_ai_client_with_caps
+from ai_clients.yandexart_client import YandexArtClient
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 
 async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
-    # (Эта функция без изменений)
     ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
     user_id = user_data['id']
     char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
@@ -110,7 +114,6 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.message.reply_text("Произошла ошибка при обращении к AI.")
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # (Эта функция без изменений)
     user = update.effective_user
     await db.add_or_update_user(user.id, user.full_name, user.username)
     user_data = await db.get_user_by_telegram_id(user.id)
@@ -125,7 +128,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @require_verification
 @inject_user_data
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
-    # (Эта функция без изменений)
     char_name_to_reset = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
     display_name = char_name_to_reset
     await db.clear_chat_history(user_data['id'], char_name_to_reset)
@@ -133,7 +135,6 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user
 
 @require_verification
 async def set_subscription_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # (Эта функция без изменений)
     if update.effective_user.id not in ADMIN_IDS:
         logger.warning(f"Попытка несанкционированного доступа к /setsub от user_id={update.effective_user.id}")
         await update.message.reply_text("У вас нет прав для выполнения этой команды.")
@@ -153,7 +154,6 @@ async def set_subscription_command(update: Update, context: ContextTypes.DEFAULT
 
 @require_verification
 async def show_wip_notice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # (Эта функция без изменений)
     await update.message.reply_text("Этот раздел находится в разработке.")
 
 @require_verification
@@ -162,44 +162,46 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
     
     current_state = context.user_data.get('state', STATE_NONE)
 
-    # --- ШАГ 1: Проверка на специальные состояния ---
     if current_state == STATE_WAITING_FOR_IMAGE_PROMPT:
         prompt_text = update.message.text
         if not prompt_text:
             await update.message.reply_text("Пожалуйста, отправьте текстовое описание для картинки.")
             return
         
-        # <<< ИЗМЕНЕНИЕ: Логика переписана для поддержки нескольких AI-генераторов >>>
-        
-        # Получаем выбранный пользователем AI из user_data
         image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
 
         if image_gen_provider == IMAGE_GEN_DALL_E_3:
-            # Сбрасываем состояние, чтобы следующий запрос был обычным текстовым
             context.user_data['state'] = STATE_NONE
             await update.message.reply_text("🎨 Принято! Начинаю рисовать через DALL-E 3, это может занять до минуты...")
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
             try:
-                # Мы знаем, что GPTClient умеет генерировать картинки
                 caps = get_ai_client_with_caps(GPT_4_OMNI, system_instruction="You are an image generation assistant.")
                 image_url, error_message = await caps.client.generate_image(prompt_text)
-
-                if error_message:
-                    await update.message.reply_text(f"😔 Ошибка: {error_message}")
-                elif image_url:
-                    await update.message.reply_photo(photo=image_url, caption=f"✨ Ваше изображение по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
-                else:
-                    await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+                if error_message: await update.message.reply_text(f"😔 Ошибка: {error_message}")
+                elif image_url: await update.message.reply_photo(photo=image_url, caption=f"✨ Ваше изображение по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
+                else: await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
             except Exception as e:
                 logger.error(f"Критическая ошибка в блоке генерации DALL-E 3: {e}", exc_info=True)
                 await update.message.reply_text(f"Произошла критическая ошибка: {e}")
         
         elif image_gen_provider == IMAGE_GEN_YANDEXART:
-            # Это заглушка, она не сбрасывает состояние, чтобы пользователь мог выбрать другой AI
-            await update.message.reply_text("Генерация через YandexArt пока не реализована. Пожалуйста, выберите другой AI или нажмите 'Отмена'.")
+            context.user_data['state'] = STATE_NONE
+            await update.message.reply_text("🎨 Принято! Отправляю запрос в YandexArt, это может занять до 2 минут...")
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+            try:
+                yandex_client = YandexArtClient(
+                    folder_id=os.getenv("YANDEX_FOLDER_ID"),
+                    oauth_token=os.getenv("YANDEX_OAUTH_TOKEN")
+                )
+                image_bytes, error_message = await yandex_client.generate_image(prompt_text)
+                if error_message: await update.message.reply_text(f"😔 Ошибка: {error_message}")
+                elif image_bytes: await update.message.reply_photo(photo=image_bytes, caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
+                else: await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+            except Exception as e:
+                logger.error(f"Критическая ошибка в блоке генерации YandexArt: {e}", exc_info=True)
+                await update.message.reply_text(f"Произошла критическая ошибка: {e}")
 
         else:
-            # Если по какой-то причине провайдер не был установлен
             context.user_data['state'] = STATE_NONE
             await update.message.reply_text("Произошла ошибка: не выбран AI для генерации. Пожалуйста, начните сначала из меню.")
         
@@ -208,14 +210,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
     if await characters_handler.handle_stateful_message(update, context):
         return
 
-    # --- ШАГ 2: Проверка лимитов (без изменений) ---
     tier_params = config.SUBSCRIPTION_TIERS[await get_actual_user_tier(user_data)]
     if tier_params['daily_limit'] is not None:
         usage = await db.get_and_update_user_usage(user_data['id'], tier_params['daily_limit'])
         if not usage["can_request"]:
             return await update.message.reply_text(f"Достигнут дневной лимит для тарифа '{tier_params['name']}'.")
 
-    # --- ШАГ 3: Определяем тип контента (без изменений) ---
     user_content = None
     image_obj = None
     is_photo = False
@@ -238,13 +238,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
     elif update.message.text:
         user_content = update.message.text
 
-    # --- ШАГ 4: Отправляем запрос в AI (без изменений) ---
     if not user_content:
         return
     await process_ai_request(update, context, user_data, user_content, is_photo=is_photo, image_obj=image_obj, is_document=is_document, document_char_count=document_char_count)
 
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # (Эта функция без изменений)
     if await captcha_handler.handle_captcha_callback(update, context): return
     if await ai_selection_handler.handle_ai_selection_callback(update, context): return
     user_data = await db.get_user_by_telegram_id(update.effective_user.id)
@@ -256,11 +254,9 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     await update.callback_query.answer("Это действие больше не актуально.")
 
 async def post_init(application: Application):
-    # (Эта функция без изменений)
     await application.bot.set_my_commands([BotCommand("start", "Начать/перезапустить"), BotCommand("reset", "Сбросить диалог")])
 
 def main():
-    # (Эта функция без изменений)
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("reset", reset_command))

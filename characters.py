@@ -5,7 +5,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Персонаж по умолчанию
-DEFAULT_CHARACTER_NAME = "Помощник"
+DEFAULT_CHARACTER_NAME = "Базовый AI"
 
 # --- НОВАЯ ЛОГИКА ЗАГРУЗКИ ПРОМПТОВ ---
 
