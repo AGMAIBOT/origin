@@ -62,7 +62,6 @@ async def show_image_generation_ai_selection_menu(update: Update, context: Conte
     text = "Выберите AI для генерации изображения:"
     keyboard = [
         [InlineKeyboardButton("🤖 GPT (DALL-E 3)", callback_data=f"select_image_gen_{IMAGE_GEN_DALL_E_3}")],
-        # <<< ИЗМЕНЕНИЕ: Эта кнопка теперь рабочая >>>
         [InlineKeyboardButton("🎨 YandexArt", callback_data=f"select_image_gen_{IMAGE_GEN_YANDEXART}")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="select_mode_image")]
     ]
