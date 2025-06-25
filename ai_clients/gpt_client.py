@@ -22,11 +22,6 @@ def _pil_to_base64(image: Image) -> str:
 
 
 class GPTClient(BaseAIClient):
-    @property
-    def supports_characters(self) -> bool:
-        # GPT-модели поддерживают системные инструкции, так что это можно будет
-        # в будущем доработать для более глубокой интеграции. Пока оставляем False для простоты.
-        return False
     
     # V-- ВОТ НЕДОСТАЮЩИЙ БЛОК, КОТОРЫЙ НУЖНО ДОБАВИТЬ --V
     def __init__(self, api_key: str, system_instruction: str, model_name: str):

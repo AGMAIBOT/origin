@@ -10,9 +10,6 @@ from .base_client import BaseAIClient
 logger = logging.getLogger(__name__)
 
 class DeepSeekClient(BaseAIClient):
-    @property
-    def supports_characters(self) -> bool:
-        return False
     def __init__(self, api_key: str, system_instruction: str, model_name: str):
         # API DeepSeek совместимо с OpenAI, поэтому мы используем их клиент,
         # но указываем свой base_url и ключ.

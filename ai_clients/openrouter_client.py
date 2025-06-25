@@ -23,9 +23,6 @@ def _pil_to_base64(image: Image) -> str:
 
 
 class OpenRouterClient(BaseAIClient):
-    @property
-    def supports_characters(self) -> bool:
-        return False
 
     # V-- ВОТ НЕДОСТАЮЩИЙ КОНСТРУКТОР, КОТОРЫЙ ВСЕ ИСПРАВИТ --V
     def __init__(self, api_key: str, system_instruction: str, model_name: str):

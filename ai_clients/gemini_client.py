@@ -13,9 +13,6 @@ from .base_client import BaseAIClient
 logger = logging.getLogger(__name__)
 
 class GeminiClient(BaseAIClient):
-    @property
-    def supports_characters(self) -> bool:
-        return True
     
     def __init__(self, api_key: str, system_instruction: str, model_name: str, vision_model_name: str):
         try:

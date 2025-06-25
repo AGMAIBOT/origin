@@ -33,12 +33,3 @@ class BaseAIClient(ABC):
         """
         pass
     
-    @abstractmethod
-    def supports_characters(self) -> bool:
-        """Возвращает True, если клиент поддерживает кастомные промпты персонажей."""
-        pass
-
-    # В будущем здесь можно добавить другие методы, например:
-    # @abstractmethod
-    # async def generate_image(...) -> Tuple[bytes, int]:
-    #     pass
