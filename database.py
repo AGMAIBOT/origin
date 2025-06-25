@@ -1,22 +1,24 @@
-# database.py
+# database.py (Версия с aiosqlite)
 
-import sqlite3
+import sqlite3 # Оставляем для первоначальной проверки и типа ошибки
 import logging
 import os
-import asyncio
-from typing import Any, Dict, List, Optional
+import aiosqlite # <<< ИЗМЕНЕНИЕ: Импортируем новую библиотеку
+from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timedelta, date
 
 logger = logging.getLogger(__name__)
 DB_FILE = os.path.join('data', 'gemini_bot.db')
 
+# Функция _init_db остается без изменений, так как она вызывается один раз
+# синхронно при старте и это нормально.
 def _init_db():
-    # ... код инициализации без изменений ...
     os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
     try:
         with sqlite3.connect(DB_FILE) as con:
             cur = con.cursor()
             cur.execute("PRAGMA foreign_keys = ON")
+            # ... (весь остальной код создания таблиц не меняется) ...
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
@@ -27,7 +29,7 @@ def _init_db():
                     current_ai_provider TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     daily_requests_count INTEGER DEFAULT 0,
-                    last_request_date TEXT, -- Изменяем на TEXT для совместимости
+                    last_request_date TEXT,
                     subscription_tier TEXT DEFAULT 'free' NOT NULL,
                     is_verified BOOLEAN NOT NULL DEFAULT 0,
                     subscription_expiry_date DATETIME
@@ -62,110 +64,89 @@ def _init_db():
         logger.error(f"Ошибка при инициализации базы данных SQLite: {e}", exc_info=True)
         raise
 
-async def db_request(query: str, params: tuple = (), fetch_one: bool = False, fetch_all: bool = False) -> Any:
-    # ... код без изменений ...
-    def _execute_sync():
-        try:
-            with sqlite3.connect(DB_FILE, timeout=10, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES) as con:
-                con.execute("PRAGMA foreign_keys = ON")
-                cur = con.cursor()
-                cur.execute(query, params)
+# <<< ИЗМЕНЕНИЕ: Полностью переписанная асинхронная функция db_request >>>
+async def db_request(
+    query: str, 
+    params: tuple = (), 
+    fetch_one: bool = False, 
+    fetch_all: bool = False
+) -> Any:
+    """
+    Выполняет асинхронный запрос к базе данных SQLite с использованием aiosqlite
+    и возвращает результаты в виде стандартных словарей Python.
+    """
+    try:
+        async with aiosqlite.connect(DB_FILE, timeout=10) as con:
+            await con.execute("PRAGMA foreign_keys = ON")
+            
+            # Мы по-прежнему используем Row factory для удобства доступа по именам колонок.
+            con.row_factory = aiosqlite.Row
+            
+            async with con.cursor() as cur:
+                await cur.execute(query, params)
+
                 if fetch_one:
-                    row = cur.fetchone()
-                    if row:
-                        keys = [description[0] for description in cur.description]
-                        return dict(zip(keys, row))
-                    return None
+                    row = await cur.fetchone()
+                    # ===> ВОТ ИСПРАВЛЕНИЕ <===
+                    # Если строка найдена, преобразуем ее в обычный dict перед возвратом.
+                    return dict(row) if row else None
+                
                 if fetch_all:
-                    rows = cur.fetchall()
-                    keys = [description[0] for description in cur.description]
-                    return [dict(zip(keys, row)) for row in rows]
-                con.commit()
+                    rows = await cur.fetchall()
+                    # ===> И ЗДЕСЬ ТОЖЕ <===
+                    # Преобразуем каждую строку в списке в обычный dict.
+                    return [dict(row) for row in rows]
+                
+                await con.commit()
                 return cur.lastrowid
-        except sqlite3.Error as e:
-            logger.error(f"Ошибка выполнения DB запроса: {query} с параметрами {params}. Ошибка: {e}", exc_info=True)
-            return None
-    return await asyncio.to_thread(_execute_sync)
+
+    except aiosqlite.Error as e:
+        logger.error(f"Ошибка выполнения DB запроса: {query} с параметрами {params}. Ошибка: {e}", exc_info=True)
+        return None
+
+# --- ВАЖНО: Все остальные функции в файле (add_or_update_user, get_user_by_id и т.д.) ---
+# --- остаются АБСОЛЮТНО БЕЗ ИЗМЕНЕНИЙ! Они уже используют db_request и будут ---
+# --- автоматически работать с новой асинхронной версией. ---
 
 # --- Пользователи ---
-async def add_or_update_user(telegram_id: int, full_name: str, username: Optional[str]) -> int:
-    # ... код без изменений ...
+async def add_or_update_user(telegram_id: int, full_name: str, username: Optional[str]) -> Optional[int]:
     query = "INSERT INTO users (telegram_id, full_name, username) VALUES (?, ?, ?) ON CONFLICT(telegram_id) DO UPDATE SET full_name = excluded.full_name, username = excluded.username RETURNING id"
     result = await db_request(query, (telegram_id, full_name, username), fetch_one=True)
     return result['id'] if result else None
 
 async def get_user_by_id(user_id: int) -> Optional[Dict]:
-    # ... код без изменений ...
     return await db_request("SELECT * FROM users WHERE id = ?", (user_id,), fetch_one=True)
 
-
-# >>>>> ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ ЛОГИКА <<<<<
 async def get_and_update_user_usage(user_id: int, daily_limit: int) -> Dict:
-    """
-    Проверяет и обновляет использование. Теперь работает корректно.
-    """
     today_str = date.today().isoformat()
-    
-    # Шаг 1: Получаем текущие данные пользователя
     user_usage = await db_request("SELECT daily_requests_count, last_request_date FROM users WHERE id = ?", (user_id,), fetch_one=True)
-    
     if not user_usage:
         return {"can_request": False, "requests_left": 0, "limit": daily_limit}
-
     last_request_date_str = user_usage.get('last_request_date')
     current_count = user_usage.get('daily_requests_count', 0)
-
-    # Шаг 2: Проверяем, новый ли сегодня день
     if last_request_date_str != today_str:
-        # Новый день! Сбрасываем счетчик до 1 и обновляем дату
         await db_request("UPDATE users SET daily_requests_count = 1, last_request_date = ? WHERE id = ?", (today_str, user_id))
         return {"can_request": True, "requests_left": daily_limit - 1, "limit": daily_limit}
-    
-    # Шаг 3: Сегодняшний день, проверяем лимит
     if current_count >= daily_limit:
-        # Лимит исчерпан
         return {"can_request": False, "requests_left": 0, "limit": daily_limit}
-    
-    # Шаг 4: Лимит не исчерпан, увеличиваем счетчик
-    # ВАЖНО: Мы не обновляем дату, т.к. она уже сегодняшняя
     await db_request("UPDATE users SET daily_requests_count = daily_requests_count + 1 WHERE id = ?", (user_id,))
     return {"can_request": True, "requests_left": daily_limit - (current_count + 1), "limit": daily_limit}
 
-
-# --- Новые функции для подписок ---
 async def set_user_subscription(telegram_id: int, tier: str, duration_days: int) -> None:
-    """
-    Устанавливает подписку пользователю.
-    Корректно обрабатывает отрицательное количество дней для тестирования и
-    сбрасывает дату для бесплатного тарифа.
-    """
     expiry_date = None
-    
-    # Мы устанавливаем дату истечения только для платных тарифов.
-    # Для тарифа 'free' дата всегда будет NULL (None).
     if tier != 'free':
-        # timedelta() отлично работает с отрицательными числами, создавая дату в прошлом.
-        # Это идеально подходит для нашего теста.
         expiry_date = datetime.now() + timedelta(days=duration_days)
-
-    # При сбросе счетчиков мы также сбрасываем дату последнего запроса, 
-    # чтобы при первом же запросе счетчик корректно установился в 1.
     today_str = date.today().isoformat()
-
     query = "UPDATE users SET subscription_tier = ?, subscription_expiry_date = ?, daily_requests_count = 0, last_request_date = ? WHERE telegram_id = ?"
     await db_request(query, (tier, expiry_date, today_str, telegram_id))
     logger.info(f"Для пользователя telegram_id={telegram_id} установлен тариф '{tier}' до {expiry_date}")
 
-
 async def set_user_tier_to_free(user_id: int):
-    # ... код без изменений ...
     query = "UPDATE users SET subscription_tier = 'free', subscription_expiry_date = NULL WHERE id = ?"
     await db_request(query, (user_id,))
     logger.info(f"Подписка для user_id={user_id} сброшена до 'free'.")
 
-
 # --- Персонажи и История (без изменений) ---
-# ... (весь остальной код без изменений)
 async def add_character(user_id: int, name: str, prompt: str) -> Optional[int]:
     return await db_request("INSERT INTO characters (user_id, name, prompt) VALUES (?, ?, ?)", (user_id, name, prompt))
 async def get_user_characters(user_id: int) -> List[Dict]:
@@ -200,11 +181,10 @@ async def trim_chat_history(user_id: int, character_name: str, keep_last_n: int)
     await db_request(query, (user_id, character_name, user_id, character_name, keep_last_n))
 
 async def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict]:
-    """Получает данные пользователя по его Telegram ID."""
     return await db_request("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,), fetch_one=True)
 
 async def verify_user(telegram_id: int) -> None:
-    """Устанавливает флаг is_verified для пользователя в 1 (true)."""
     await db_request("UPDATE users SET is_verified = 1 WHERE telegram_id = ?", (telegram_id,))
 
+# Вызов _init_db() остается здесь
 _init_db()
