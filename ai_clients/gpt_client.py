@@ -3,7 +3,7 @@
 import logging
 from typing import List, Dict, Tuple
 from PIL.Image import Image
-# <<< ИЗМЕНЕНИЕ: openai.PermissionDeniedError импортируем для лучшей обработки ошибок >>>
+# [Dev-Ассистент]: openai.PermissionDeniedError импортируем для лучшей обработки ошибок
 from openai import AsyncOpenAI, Timeout, PermissionDeniedError
 import base64
 from io import BytesIO
@@ -80,36 +80,45 @@ class GPTClient(BaseAIClient):
             logger.error(f"Ошибка от OpenAI Vision API: {e}", exc_info=True)
             return f"Произошла ошибка при обращении к GPT Vision: {e}", 0
 
-    # <<< ИЗМЕНЕНИЕ: Метод переписан для использования классического API DALL-E 3 (План Б) >>>
     async def generate_image(self, prompt: str) -> tuple[str | None, str | None]:
-        """
-        Генерирует изображение с помощью классического API DALL-E 3.
-        Возвращает кортеж (image_url, error_message).
-        В случае успеха image_url будет содержать ссылку на картинку, а error_message будет None.
-        В случае ошибки image_url будет None, а error_message будет содержать текст ошибки.
-        """
         logger.info(f"Запрос на генерацию изображения с моделью dall-e-3")
         try:
-            # Вызываем другой, более простой и стабильный API для генерации изображений
             response = await self._client.images.generate(
-                model="dall-e-3",     # Явно указываем модель для рисования
+                model="dall-e-3",
                 prompt=prompt,
                 n=1,
-                size="1024x1024",     # Стандартный размер, можно выбрать и другие
-                quality="standard",   # Можно поменять на "hd" для лучшего качества, но дороже
-                response_format="url",# Мы хотим получить именно ссылку
+                size="1024x1024",
+                quality="standard",
+                response_format="url",
             )
-
-            # API возвращает прямую ссылку на сгенерированное изображение
             image_url = response.data[0].url
             if not image_url:
                  return None, "Не удалось сгенерировать изображение. API не вернул URL."
 
-            return image_url, None # Успех!
-
+            return image_url, None
         except PermissionDeniedError as e:
             logger.error(f"Ошибка доступа при генерации изображения через DALL-E 3 API: {e}", exc_info=True)
             return None, "Доступ к API генерации изображений запрещен. Проверьте ваш тарифный план и лимиты в OpenAI."
         except Exception as e:
             logger.error(f"Ошибка при генерации изображения через DALL-E 3 API: {e}", exc_info=True)
             return None, f"Произошла ошибка при обращении к DALL-E 3 API: {e}"
+
+    # [Dev-Ассистент]: НОВЫЙ МЕТОД ДЛЯ ТРАНСКРИПЦИИ АУДИО
+    async def transcribe_audio(self, audio_bytes: bytes) -> str | None:
+        """
+        Отправляет аудиофайл в OpenAI Whisper API для транскрипции.
+        :param audio_bytes: Аудиофайл в виде байтов (например, в формате mp3).
+        :return: Распознанный текст или None в случае ошибки.
+        """
+        logger.info("Отправка аудио в OpenAI Whisper для транскрипции...")
+        try:
+            # Важно передавать файл как кортеж (имя_файла, байты)
+            transcript = await self._client.audio.transcriptions.create(
+                model="whisper-1",
+                file=("voice.mp3", audio_bytes)
+            )
+            logger.info("Транскрипция выполнена успешно.")
+            return transcript.text
+        except Exception as e:
+            logger.error(f"Ошибка при транскрипции аудио через Whisper API: {e}", exc_info=True)
+            return None

@@ -7,7 +7,10 @@ from functools import wraps
 from telegram.ext import ContextTypes
 import config
 
-# Импортируем нужные модули для новой функции
+# [Dev-Ассистент]: Новые импорты для работы с аудио
+from io import BytesIO
+from pydub import AudioSegment
+
 import database as db
 from constants import TIER_FREE
 logger = logging.getLogger(__name__)
@@ -15,9 +18,7 @@ logger = logging.getLogger(__name__)
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     """Возвращает объект ReplyKeyboardMarkup с основными командами в две колонки."""
     keyboard = [
-        # Первый ряд кнопок
         [KeyboardButton("Персонажи"), KeyboardButton("Выбор AI")],
-        # Второй ряд кнопок
         [KeyboardButton("Профиль"), KeyboardButton("Настройки")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -33,13 +34,14 @@ async def delete_message_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def send_long_message(update: Update, text: str):
     """Разбивает длинное сообщение на части и отправляет их по отдельности."""
-    max_length = 4096  # Максимальная длина сообщения в Telegram
+    max_length = 4096
     if len(text) <= max_length:
         await update.message.reply_text(text)
     else:
         parts = [text[i:i + max_length] for i in range(0, len(text), max_length)]
         for part in parts:
             await update.message.reply_text(part)
+            
 async def get_actual_user_tier(user_data: dict) -> str:
     """
     Централизованно проверяет срок действия подписки, при необходимости обновляет
@@ -47,20 +49,12 @@ async def get_actual_user_tier(user_data: dict) -> str:
     """
     current_tier = user_data.get('subscription_tier', TIER_FREE)
     expiry_date_str = user_data.get('subscription_expiry_date')
-    
-    # Проверяем только если это платный тариф и есть дата истечения
     if current_tier != TIER_FREE and expiry_date_str:
-        # Преобразуем строку в объект datetime, если это необходимо
         expiry_date = datetime.fromisoformat(expiry_date_str) if isinstance(expiry_date_str, str) else expiry_date_str
-        
         if expiry_date and expiry_date < datetime.now():
             logger.info(f"Подписка для user_id={user_data['id']} истекла. Сбрасываем до 'free'.")
-            # Обновляем данные в БД
             await db.set_user_tier_to_free(user_data['id'])
-            # Возвращаем новый, актуальный тариф
             return TIER_FREE
-    
-    # Если подписка не истекла или бесплатная, возвращаем текущий тариф
     return current_tier
 
 def require_verification(func):
@@ -70,18 +64,13 @@ def require_verification(func):
     """
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        # /start - единственная команда, доступная неавторизованным пользователям.
-        # Мы проверяем и текст, и объект команды для надежности.
         if (update.message and update.message.text and update.message.text.startswith('/start')) or \
            (update.message and update.message.entities and any(e.type == 'bot_command' and update.message.text[e.offset:e.offset+e.length] == '/start' for e in update.message.entities)):
             return await func(update, context, *args, **kwargs)
-
         user_data = await db.get_user_by_telegram_id(update.effective_user.id)
-
         if user_data and user_data.get('is_verified'):
             return await func(update, context, *args, **kwargs)
         else:
-            # Используем message из update, если он есть, иначе из query
             message = update.message or update.callback_query.message
             await message.reply_text(
                 "Для доступа к функциям бота, пожалуйста, пройдите проверку.\n"
@@ -90,18 +79,12 @@ def require_verification(func):
             return
     return wrapper
 
-# <<< ИЗМЕНЕНИЕ: Добавлен новый декоратор для внедрения данных пользователя >>>
 def inject_user_data(func):
     """
-    Декоратор, который:
-    1. Получает или создает пользователя в БД.
-    2. Извлекает его полные данные (user_data).
-    3. "Внедряет" user_data в качестве аргумента в оборачиваемую функцию.
-    4. Проверяет, что пользователь был успешно найден/создан.
+    Декоратор, который "внедряет" user_data в качестве аргумента в оборачиваемую функцию.
     """
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        # Шаг 1: Гарантируем, что пользователь существует в БД и получаем его ID
         user_id = await db.add_or_update_user(
             update.effective_user.id,
             update.effective_user.full_name,
@@ -111,15 +94,11 @@ def inject_user_data(func):
             message = update.message or update.callback_query.message
             await message.reply_text("Произошла ошибка с вашим профилем. Попробуйте позже.")
             return
-
-        # Шаг 2: Получаем полные данные пользователя по его ID
         user_data = await db.get_user_by_id(user_id)
         if not user_data:
             message = update.message or update.callback_query.message
             await message.reply_text("Не удалось загрузить данные вашего профиля.")
             return
-        
-        # Шаг 3: Вызываем оригинальную функцию, передавая ей готовые user_data
         return await func(update, context, user_data=user_data, *args, **kwargs)
     return wrapper
 
@@ -130,27 +109,39 @@ class FileSizeError(Exception):
 async def get_text_content_from_document(document_file, context: ContextTypes.DEFAULT_TYPE) -> str:
     """
     Универсальная функция для чтения текстового содержимого из файла.
-    Проверяет тип, размер и декодирует содержимое.
-    Теперь находится в utils, чтобы быть доступной для всех обработчиков.
     """
     if document_file.mime_type != 'text/plain' and not document_file.file_name.lower().endswith('.txt'):
         raise ValueError("Неподдерживаемый тип файла. Разрешены только текстовые файлы (.txt).")
-    
-    # Проверяем размер файла в байтах (приблизительная проверка)
     if document_file.file_size and document_file.file_size > config.ABSOLUTE_MAX_FILE_CHARS * 4: 
         raise FileSizeError(f"Файл слишком большой (>{config.ABSOLUTE_MAX_FILE_CHARS * 4} байт).")
-    
     file = await context.bot.get_file(document_file.file_id)
     downloaded_bytes = await file.download_as_bytearray()
-    
     try:
         text_content = downloaded_bytes.decode('utf-8')
     except UnicodeDecodeError:
-        # Если UTF-8 не сработал, пробуем популярную для Windows кодировку
         text_content = downloaded_bytes.decode('windows-1251', errors='ignore')
-
-    # Финальная, точная проверка по количеству символов
     if len(text_content) > config.ABSOLUTE_MAX_FILE_CHARS:
         raise FileSizeError(f"Файл слишком большой ({len(text_content)} символов). Максимум: {config.ABSOLUTE_MAX_FILE_CHARS}.")
-    
     return text_content
+
+# [Dev-Ассистент]: НОВАЯ ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ АУДИО
+def convert_oga_to_mp3_in_memory(oga_bytearray: bytearray) -> bytes:
+    """
+    Конвертирует аудио из формата OGG/Opus (от Telegram) в MP3 в оперативной памяти.
+    :param oga_bytearray: Аудиофайл в виде байтового массива.
+    :return: Аудиофайл в формате MP3 в виде байтов.
+    """
+    # Создаем файловый объект в памяти из байтового массива
+    oga_audio_stream = BytesIO(oga_bytearray)
+    
+    # Загружаем аудио из потока с помощью pydub
+    audio = AudioSegment.from_file(oga_audio_stream, format="ogg")
+    
+    # Создаем буфер в памяти для сохранения MP3
+    mp3_buffer = BytesIO()
+    
+    # Экспортируем аудио в MP3 в этот буфер
+    audio.export(mp3_buffer, format="mp3")
+    
+    # Возвращаем содержимое буфера в виде байтов
+    return mp3_buffer.getvalue()

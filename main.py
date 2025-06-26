@@ -1,54 +1,35 @@
-# main.py (ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
+# main.py
 
 import os
 import logging
+# [Dev-Ассистент]: Новый импорт для асинхронных операций
+import asyncio
 from dotenv import load_dotenv
 from typing import List
 
-# Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 def parse_admin_ids(ids_string: str) -> List[int]:
     admin_ids = []
     for admin_id_str in ids_string.split(','):
         cleaned_id_str = admin_id_str.strip()
-        if not cleaned_id_str:
-            continue
-        try:
-            admin_ids.append(int(cleaned_id_str))
-        except ValueError:
-            logger.warning(f"Не удалось преобразовать ID администратора '{cleaned_id_str}' в число. Значение проигнорировано.")
+        if not cleaned_id_str: continue
+        try: admin_ids.append(int(cleaned_id_str))
+        except ValueError: logger.warning(f"Не удалось преобразовать ID администратора '{cleaned_id_str}'.")
     return admin_ids
 
-# Загружаем переменные из .env файла
 load_dotenv()
-
-
-loaded_gemini_key = os.getenv('GEMINI_API_KEY')
-print(f"--- DEBUG: Загружен ключ Gemini: {loaded_gemini_key} ---")
-logger.info("Проверка API ключей...")
-logger.info(f"Ключ Gemini: {'Найден' if os.getenv('GEMINI_API_KEY') else 'НЕ НАЙДЕН'}")
-logger.info(f"Ключ OpenAI: {'Найден' if os.getenv('OPENAI_API_KEY') else 'НЕ НАЙДЕН'}")
-logger.info(f"Ключ DeepSeek: {'Найден' if os.getenv('DEEPSEEK_API_KEY') else 'НЕ НАЙДЕН'}")
-logger.info(f"Ключ OpenRouter: {'Найден' if os.getenv('OPENROUTER_API_KEY') else 'НЕ НАЙДЕН'}")
-logger.info(f"Ключ Yandex OAuth: {'Найден' if os.getenv('YANDEX_OAUTH_TOKEN') else 'НЕ НАЙДЕН'}")
-yandex_ok = bool(os.getenv('YANDEX_OAUTH_TOKEN')) and bool(os.getenv('YANDEX_FOLDER_ID'))
-logger.info(f"Ключи Yandex (OAuth+FolderID): {'Найдены' if yandex_ok else 'НЕ НАЙДЕНЫ'}")
-
-# <<< ИЗМЕНЕНИЕ: Полный блок определения ADMIN_IDS >>>
 admin_ids_from_env = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = parse_admin_ids(admin_ids_from_env)
 
-if not ADMIN_IDS:
-    logger.warning("Переменная ADMIN_IDS не задана или не содержит корректных ID. Функции администратора будут недоступны.")
-else:
-    logger.info(f"Загружены ID администраторов: {ADMIN_IDS}")
+# [Dev-Ассистент]: Загружаем ключ OpenAI для транскрипции
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 from io import BytesIO
 from PIL import Image
 from telegram import Update, BotCommand
+# [Dev-Ассистент]: Добавляем filters.VOICE для обработки голосовых
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.helpers import escape_markdown
 from telegram.constants import ChatAction
@@ -64,14 +45,17 @@ from constants import (
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler
 
+# [Dev-Ассистент]: Импортируем нашу новую утилиту и GPTClient для Whisper
+import utils
 from utils import get_main_keyboard, send_long_message, get_actual_user_tier, require_verification, get_text_content_from_document, FileSizeError, inject_user_data
 from ai_clients.factory import get_ai_client_with_caps
+from ai_clients.gpt_client import GPTClient
 from ai_clients.yandexart_client import YandexArtClient
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-
 async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
+    # ... (эта функция остается без изменений) ...
     ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
     user_id = user_data['id']
     char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
@@ -85,14 +69,14 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.message.reply_text(f"Ошибка конфигурации: {e}")
         return
     if is_photo and not caps.supports_vision:
-        await update.message.reply_text(f"К сожалению, выбранная модель AI не умеет обрабатывать изображения. Пожалуйста, переключитесь на модель с поддержкой vision.")
+        await update.message.reply_text(f"К сожалению, выбранная модель AI не умеет обрабатывать изображения.")
         return
     if is_document:
         if caps.file_char_limit == 0:
             await update.message.reply_text(f"Обработка файлов для выбранной модели AI не поддерживается.")
             return
         if document_char_count > caps.file_char_limit:
-            await update.message.reply_text(f"Файл слишком большой для этой модели. Максимум: {caps.file_char_limit} символов, в вашем файле: {document_char_count}.")
+            await update.message.reply_text(f"Файл слишком большой. Максимум: {caps.file_char_limit} символов, в вашем файле: {document_char_count}.")
             return
     history_len = await db.get_history_length(user_id, char_name)
     if history_len > config.HISTORY_LIMIT_TRIGGER:
@@ -113,6 +97,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         logger.error(f"Ошибка AI запроса для user_id={user_id}: {e}", exc_info=True)
         await update.message.reply_text("Произошла ошибка при обращении к AI.")
 
+# ... (команды start, reset, set_subscription, show_wip_notice остаются без изменений) ...
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await db.add_or_update_user(user.id, user.full_name, user.username)
@@ -155,21 +140,18 @@ async def set_subscription_command(update: Update, context: ContextTypes.DEFAULT
 @require_verification
 async def show_wip_notice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Этот раздел находится в разработке.")
-
+    
 @require_verification
 @inject_user_data
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
-    
+    # ... (эта функция остается без изменений) ...
     current_state = context.user_data.get('state', STATE_NONE)
-
     if current_state == STATE_WAITING_FOR_IMAGE_PROMPT:
         prompt_text = update.message.text
         if not prompt_text:
             await update.message.reply_text("Пожалуйста, отправьте текстовое описание для картинки.")
             return
-        
         image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
-
         if image_gen_provider == IMAGE_GEN_DALL_E_3:
             context.user_data['state'] = STATE_NONE
             await update.message.reply_text("🎨 Принято! Начинаю рисовать через DALL-E 3, это может занять до минуты...")
@@ -183,16 +165,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
             except Exception as e:
                 logger.error(f"Критическая ошибка в блоке генерации DALL-E 3: {e}", exc_info=True)
                 await update.message.reply_text(f"Произошла критическая ошибка: {e}")
-        
         elif image_gen_provider == IMAGE_GEN_YANDEXART:
             context.user_data['state'] = STATE_NONE
             await update.message.reply_text("🎨 Принято! Отправляю запрос в YandexArt, это может занять до 2 минут...")
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
             try:
-                yandex_client = YandexArtClient(
-                    folder_id=os.getenv("YANDEX_FOLDER_ID"),
-                    oauth_token=os.getenv("YANDEX_OAUTH_TOKEN")
-                )
+                yandex_client = YandexArtClient(folder_id=os.getenv("YANDEX_FOLDER_ID"), oauth_token=os.getenv("YANDEX_OAUTH_TOKEN"))
                 image_bytes, error_message = await yandex_client.generate_image(prompt_text)
                 if error_message: await update.message.reply_text(f"😔 Ошибка: {error_message}")
                 elif image_bytes: await update.message.reply_photo(photo=image_bytes, caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
@@ -200,27 +178,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
             except Exception as e:
                 logger.error(f"Критическая ошибка в блоке генерации YandexArt: {e}", exc_info=True)
                 await update.message.reply_text(f"Произошла критическая ошибка: {e}")
-
         else:
             context.user_data['state'] = STATE_NONE
             await update.message.reply_text("Произошла ошибка: не выбран AI для генерации. Пожалуйста, начните сначала из меню.")
-        
         return
-
     if await characters_handler.handle_stateful_message(update, context):
         return
-
     tier_params = config.SUBSCRIPTION_TIERS[await get_actual_user_tier(user_data)]
     if tier_params['daily_limit'] is not None:
         usage = await db.get_and_update_user_usage(user_data['id'], tier_params['daily_limit'])
         if not usage["can_request"]:
             return await update.message.reply_text(f"Достигнут дневной лимит для тарифа '{tier_params['name']}'.")
-
-    user_content = None
-    image_obj = None
-    is_photo = False
-    is_document = False
-    document_char_count = 0 
+    user_content, image_obj, is_photo, is_document, document_char_count = None, None, False, False, 0
     if update.message.photo:
         is_photo = True
         file_bytes = await (await context.bot.get_file(update.message.photo[-1].file_id)).download_as_bytearray()
@@ -237,12 +206,65 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
             return await update.message.reply_text(f"Ошибка обработки файла: {e}")
     elif update.message.text:
         user_content = update.message.text
-
-    if not user_content:
-        return
+    if not user_content: return
     await process_ai_request(update, context, user_data, user_content, is_photo=is_photo, image_obj=image_obj, is_document=is_document, document_char_count=document_char_count)
 
+# [Dev-Ассистент]: НОВЫЙ ОБРАБОТЧИК ДЛЯ ГОЛОСОВЫХ СООБЩЕНИЙ
+@require_verification
+@inject_user_data
+async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
+    """Обрабатывает входящие голосовые сообщения."""
+    
+    # 1. Проверяем лимиты, как в обычном сообщении
+    tier_params = config.SUBSCRIPTION_TIERS[await get_actual_user_tier(user_data)]
+    if tier_params['daily_limit'] is not None:
+        usage = await db.get_and_update_user_usage(user_data['id'], tier_params['daily_limit'])
+        if not usage["can_request"]:
+            return await update.message.reply_text(f"Достигнут дневной лимит для тарифа '{tier_params['name']}'.")
+
+    # 2. Информируем пользователя, что мы начали работать
+    status_message = await update.message.reply_text("🎙️ Получил голосовое, расшифровываю...")
+    
+    try:
+        # 3. Скачиваем аудиофайл
+        voice_file = await context.bot.get_file(update.message.voice.file_id)
+        oga_bytes = await voice_file.download_as_bytearray()
+        
+        # 4. Конвертируем OGA в MP3
+        loop = asyncio.get_running_loop()
+        mp3_bytes = await loop.run_in_executor(None, utils.convert_oga_to_mp3_in_memory, oga_bytes)
+        
+        # 5. Отправляем на транскрипцию в Whisper
+        # Для доступа к Whisper нам нужен ключ OpenAI
+        if not OPENAI_API_KEY:
+            raise ValueError("API ключ для OpenAI (необходим для Whisper) не найден в .env")
+
+        # Создаем временный клиент GPT только для этой задачи
+        # Системная инструкция и модель не важны, т.к. мы вызываем другой метод
+        gpt_client_for_whisper = GPTClient(api_key=OPENAI_API_KEY, system_instruction="", model_name="")
+        recognized_text = await gpt_client_for_whisper.transcribe_audio(mp3_bytes)
+        
+        # 6. Обрабатываем результат
+        if recognized_text:
+            await status_message.edit_text(f"<i>Распознанный текст:</i>\n\n«{recognized_text}»\n\n🧠 Отправляю на обработку...", parse_mode='HTML')
+            # Передаем распознанный текст в нашу основную функцию-обработчик
+            await process_ai_request(update, context, user_data, user_content=recognized_text)
+        else:
+            await status_message.edit_text("😔 Не удалось распознать речь в вашем сообщении. Пожалуйста, попробуйте еще раз.")
+
+    except ValueError as e:
+        logger.error(f"Ошибка конфигурации при обработке голоса: {e}")
+        await status_message.edit_text(f"Ошибка конфигурации: {e}")
+    except Exception as e:
+        logger.error(f"Критическая ошибка при обработке голосового сообщения: {e}", exc_info=True)
+        # Проверяем на ошибку отсутствия ffmpeg
+        if "No such file or directory: 'ffmpeg'" in str(e) or "Cannot find specified file" in str(e):
+             await status_message.edit_text("Ошибка: для распознавания голоса на сервере должна быть установлена утилита `ffmpeg`.")
+        else:
+            await status_message.edit_text("Произошла неизвестная ошибка при обработке вашего голосового сообщения.")
+
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (эта функция остается без изменений) ...
     if await captcha_handler.handle_captcha_callback(update, context): return
     if await ai_selection_handler.handle_ai_selection_callback(update, context): return
     user_data = await db.get_user_by_telegram_id(update.effective_user.id)
@@ -265,9 +287,13 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Персонажи$"), require_verification(character_menus.show_character_categories_menu)))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Профиль$"), profile_handler.show_profile))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Настройки$"), show_wip_notice))
+    
+    # [Dev-Ассистент]: Регистрируем новый обработчик для голоса
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice_message))
+    
     app.add_handler(MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.PHOTO | filters.Document.MimeType("text/plain"), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback_handler))
-    logger.info("Бот запущен и готов к работе (Архитектура: Мульти-AI, Вариант 3)...")
+    logger.info("Бот запущен и готов к работе...")
     app.run_polling()
 
 if __name__ == "__main__":
