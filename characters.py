@@ -1,7 +1,7 @@
 import os
 import logging
 from pathlib import Path
-
+import yaml
 logger = logging.getLogger(__name__)
 
 # Персонаж по умолчанию
@@ -11,8 +11,8 @@ DEFAULT_CHARACTER_NAME = "Базовый AI"
 
 def load_prompts_from_files() -> tuple[dict, dict]:
     """
-    Сканирует директорию /prompts, загружает промпты из .txt файлов
-    и возвращает два словаря: один со всеми промптами, другой с категориями.
+    Сканирует директорию /prompts, загружает данные о персонажах из .yml файлов
+    и возвращает два словаря: один со всеми данными персонажей, другой с категориями.
     """
     all_prompts = {}
     character_categories = {}
@@ -28,15 +28,33 @@ def load_prompts_from_files() -> tuple[dict, dict]:
             category_name = category_dir.name
             character_categories[category_name] = []
             
-            for prompt_file in category_dir.glob("*.txt"):
-                character_name = prompt_file.stem  # Имя файла без расширения
+            # [Dev-Ассистент]: Ищем файлы с расширением .yml вместо .txt
+            for prompt_file in category_dir.glob("*.yml"):
+                character_name = prompt_file.stem
                 try:
                     with open(prompt_file, "r", encoding="utf-8") as f:
-                        all_prompts[character_name] = f.read().strip()
-                    character_categories[category_name].append(character_name)
-                    logger.info(f"Загружен промпт для '{character_name}' из категории '{category_name}'")
+                        # [Dev-Ассистент]: Используем yaml.safe_load для безопасного парсинга файла
+                        data = yaml.safe_load(f)
+
+                    # [Dev-Ассистент]: Проверяем, что файл не пустой и данные успешно загружены
+                    if data:
+                        # [Dev-Ассистент]: Сохраняем всего персонажа (описание и промпт) в виде словаря.
+                        # [Dev-Ассистент]: Используем .get() для безопасности, чтобы код не упал, если
+                        # [Dev-Ассистент]: в файле отсутствует description или prompt.
+                        all_prompts[character_name] = {
+                            'description': data.get('description', 'Описание для этого персонажа не задано.'),
+                            'prompt': data.get('prompt', 'Системный промпт для этого персонажа не задан.')
+                        }
+                        character_categories[category_name].append(character_name)
+                        # [Dev-Ассистент]: Обновляем лог, т.к. загружаем теперь не просто промпт, а целого персонажа
+                        logger.info(f"Загружен персонаж '{character_name}' из категории '{category_name}'")
+                    else:
+                        logger.warning(f"Файл промпта {prompt_file} пуст или имеет неверный формат.")
+
+                except yaml.YAMLError as e:
+                    logger.error(f"Ошибка парсинга YAML в файле {prompt_file}: {e}")
                 except Exception as e:
-                    logger.error(f"Не удалось загрузить промпт из файла {prompt_file}: {e}")
+                    logger.error(f"Не удалось загрузить персонажа из файла {prompt_file}: {e}")
 
     return all_prompts, character_categories
 

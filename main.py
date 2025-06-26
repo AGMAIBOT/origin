@@ -34,7 +34,6 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from telegram.helpers import escape_markdown
 from telegram.constants import ChatAction
 from google.api_core.exceptions import ResourceExhausted
-
 import database as db
 import config
 from constants import (
@@ -55,12 +54,27 @@ from ai_clients.yandexart_client import YandexArtClient
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
-    # ... (эта функция остается без изменений) ...
+    # [Dev-Ассистент]: ВОТ ИСПРАВЛЕНИЕ. Мы возвращаем на место эту строку,
+    # [Dev-Ассистент]: которая определяет, какую AI модель использовать.
+    # [Dev-Ассистент]: Я случайно упустил ее в прошлый раз.
     ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
     user_id = user_data['id']
     char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
     custom_char = await db.get_custom_character_by_name(user_id, char_name)
-    system_instruction = custom_char['prompt'] if custom_char else ALL_PROMPTS.get(char_name, "Ты — полезный ассистент.")
+
+    # [Dev-Ассистент]: Этот блок теперь будет работать правильно,
+    # [Dev-Ассистент]: так как все нужные переменные на месте.
+    system_instruction = ""
+    default_prompt = "Ты — полезный ассистент."
+
+    if custom_char:
+        system_instruction = custom_char['prompt']
+    else:
+        char_info = ALL_PROMPTS.get(char_name)
+        if char_info:
+            system_instruction = char_info.get('prompt', default_prompt)
+        else:
+            system_instruction = default_prompt
     try:
         caps = get_ai_client_with_caps(ai_provider, system_instruction)
         ai_client = caps.client
@@ -68,6 +82,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         logger.error(f"Ошибка создания AI клиента: {e}")
         await update.message.reply_text(f"Ошибка конфигурации: {e}")
         return
+    
     if is_photo and not caps.supports_vision:
         await update.message.reply_text(f"К сожалению, выбранная модель AI не умеет обрабатывать изображения.")
         return

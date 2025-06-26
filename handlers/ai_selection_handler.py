@@ -28,9 +28,7 @@ async def show_ai_mode_selection_hub(update: Update, context: ContextTypes.DEFAU
 async def show_text_ai_selection_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню выбора ТЕКСТОВЫХ моделей AI."""
     user_data = await db.get_user_by_telegram_id(update.effective_user.id)
-    if not user_data or user_data.get('subscription_tier') != TIER_PRO:
-        await update.callback_query.answer("Эта функция доступна только на Pro-тарифе.", show_alert=True)
-        return
+    # [Dev-Ассистент]: ПРОВЕРКА НА ТАРИФ УДАЛЕНА. Меню теперь будет показываться всем.
     current_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
     text = (
         "📝 *Выберите текстовую модель ИИ*\n\n"
@@ -137,6 +135,12 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
 
     # --- Обработка выбора конкретной ТЕКСТОВОЙ модели ---
     if query.data.startswith("select_ai_"):
+        # [Dev-Ассистент]: ДОБАВЛЯЕМ ПРОВЕРКУ ТАРИФА ПЕРЕД СМЕНОЙ ПРОВАЙДЕРА
+        user_data = await db.get_user_by_telegram_id(update.effective_user.id)
+        if not user_data or user_data.get('subscription_tier') != TIER_PRO:
+            await query.answer("Эта функция доступна только на Pro-тарифе.", show_alert=True)
+            return True # Возвращаем True, т.к. мы обработали этот callback
+
         new_provider = query.data.replace("select_ai_", "")
         user_id = update.effective_user.id
         await set_ai_provider(user_id, new_provider)

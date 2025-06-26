@@ -63,7 +63,11 @@ async def handle_character_callbacks(update: Update, context: ContextTypes.DEFAU
     # 2. Проверяем совпадения по префиксу
     for prefix, handler in PREFIX_CALLBACK_ROUTES.items():
         if callback_data.startswith(prefix):
-            await query.answer()
+            # [Dev-Ассистент]: УБИРАЕМ ПРЕЖДЕВРЕМЕННЫЙ ОТВЕТ.
+            # [Dev-Ассистент]: Теперь право ответить на query передается
+            # [Dev-Ассистент]: непосредственно самой функции-обработчику (хендлеру).
+            # await query.answer() # <--- УДАЛЕНО!
+
             # Передаем prefix в обработчик, чтобы он мог извлечь ID или другие данные
             await handler(update, context, prefix=prefix)
             return True
