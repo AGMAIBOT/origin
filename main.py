@@ -43,7 +43,7 @@ from constants import (
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, GEMINI_STANDARD
 )
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
-from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler
+from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler, onboarding_handler
 
 # [Dev-Ассистент]: Импортируем нашу новую утилиту и GPTClient для Whisper
 import utils
@@ -280,6 +280,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     # ... (эта функция остается без изменений) ...
     if await captcha_handler.handle_captcha_callback(update, context): return
     if await ai_selection_handler.handle_ai_selection_callback(update, context): return
+    if await onboarding_handler.handle_onboarding_callback(update, context): return
     user_data = await db.get_user_by_telegram_id(update.effective_user.id)
     if not user_data or not user_data.get('is_verified'):
         await update.callback_query.answer("Пожалуйста, пройдите проверку, нажав /start", show_alert=True)
@@ -299,7 +300,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Выбор AI$"), require_verification(ai_selection_handler.show_ai_mode_selection_hub)))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Персонажи$"), require_verification(character_menus.show_character_categories_menu)))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Профиль$"), profile_handler.show_profile))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Настройки$"), show_wip_notice))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^🤖 AGM, научи меня!$"), require_verification(onboarding_handler.start_onboarding)))
     
     # [Dev-Ассистент]: Регистрируем новый обработчик для голоса
     app.add_handler(MessageHandler(filters.VOICE, handle_voice_message))

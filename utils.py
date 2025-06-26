@@ -16,10 +16,10 @@ from constants import TIER_FREE
 logger = logging.getLogger(__name__)
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
-    """Возвращает объект ReplyKeyboardMarkup с основными командами в две колонки."""
     keyboard = [
         [KeyboardButton("Персонажи"), KeyboardButton("Выбор AI")],
-        [KeyboardButton("Профиль"), KeyboardButton("Настройки")]
+        # [Dev-Ассистент]: МЕНЯЕМ ТЕКСТ КНОПКИ ЗДЕСЬ
+        [KeyboardButton("Профиль"), KeyboardButton("🤖 AGM, научи меня!")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
