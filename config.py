@@ -62,3 +62,7 @@ FILE_PROCESSING_LIMITS = {
     OPENROUTER_DEEPSEEK: 15000,
     OPENROUTER_GEMINI_2_FLASH: 30000,
 }
+# --- Настройки генерации изображений ---
+# [Dev-Ассистент]: Лимит на количество символов в промпте для YandexArt.
+# [Dev-Ассистент]: Мы вынесли его сюда, чтобы легко менять в одном месте.
+YANDEXART_PROMPT_LIMIT = 500

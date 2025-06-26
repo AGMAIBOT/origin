@@ -166,11 +166,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                 logger.error(f"Критическая ошибка в блоке генерации DALL-E 3: {e}", exc_info=True)
                 await update.message.reply_text(f"Произошла критическая ошибка: {e}")
         elif image_gen_provider == IMAGE_GEN_YANDEXART:
+            # [Dev-Ассистент]: ДОБАВЛЕНА ПРОВЕРКА НА ДЛИНУ ПРОМПТА
+            if len(prompt_text) > config.YANDEXART_PROMPT_LIMIT:
+                await update.message.reply_text(
+                    f"😔 Ваш запрос для YandexArt слишком длинный.\n\n"
+                    f"Максимум: {config.YANDEXART_PROMPT_LIMIT} символов. У вас: {len(prompt_text)}.\n\n"
+                    f"Пожалуйста, сократите описание и попробуйте снова."
+                )
+                # [Dev-Ассистент]: Важно выйти из функции, чтобы не отправлять запрос в API
+                return
+
             context.user_data['state'] = STATE_NONE
             await update.message.reply_text("🎨 Принято! Отправляю запрос в YandexArt, это может занять до 2 минут...")
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
             try:
-                yandex_client = YandexArtClient(folder_id=os.getenv("YANDEX_FOLDER_ID"), oauth_token=os.getenv("YANDEX_OAUTH_TOKEN"))
+                yandex_client = YandexArtClient(
+                    folder_id=os.getenv("YANDEX_FOLDER_ID"),
+                    api_key=os.getenv("YANDEX_API_KEY")
+                )
                 image_bytes, error_message = await yandex_client.generate_image(prompt_text)
                 if error_message: await update.message.reply_text(f"😔 Ошибка: {error_message}")
                 elif image_bytes: await update.message.reply_photo(photo=image_bytes, caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
@@ -283,7 +296,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("reset", reset_command))
     app.add_handler(CommandHandler("setsub", set_subscription_command))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Выбор AI$"), require_verification(ai_selection_handler.show_ai_mode_selection_hub))) 
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Выбор AI$"), require_verification(ai_selection_handler.show_ai_mode_selection_hub)))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Персонажи$"), require_verification(character_menus.show_character_categories_menu)))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Профиль$"), profile_handler.show_profile))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Настройки$"), show_wip_notice))
