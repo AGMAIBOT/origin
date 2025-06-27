@@ -30,6 +30,7 @@ EXACT_CALLBACK_ROUTES = {
 # Словарь для колбэков, начинающихся с определенного префикса.
 # Ключ: префикс, Значение: функция-обработчик.
 PREFIX_CALLBACK_ROUTES = {
+    "show_full_prompt_": character_actions.handle_show_full_prompt,
     "category_": character_menus.show_standard_characters_menu,
     "select_char_": character_actions.handle_select_character,
     "select_custom_char_": character_actions.handle_select_character,

@@ -6,7 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
-
+from io import BytesIO
 import database as db
 import config  # <<< Импортируем config
 from characters import DEFAULT_CHARACTER_NAME, CHARACTER_CATEGORIES
@@ -192,6 +192,7 @@ async def prompt_for_new_name(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data['state'] = STATE_EDITING_CHAR_NAME
     keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data=f"cancel_edit_action_{context.user_data[TEMP_CHAR_ID]}")]]
     await update.callback_query.message.edit_text("Введите новое имя для персонажа:", reply_markup=InlineKeyboardMarkup(keyboard))
+
 async def prompt_for_new_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -199,8 +200,18 @@ async def prompt_for_new_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     prompt_preview = (current_prompt[:1000] + '...') if len(current_prompt) > 1000 else current_prompt
     text = f"Текущий промпт:\n<pre>{html.escape(prompt_preview)}</pre>\n\nОтправьте новый промпт (текст/файл)."
     context.user_data['state'] = STATE_EDITING_CHAR_PROMPT
-    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data=f"cancel_edit_action_{context.user_data[TEMP_CHAR_ID]}")]]
+
+    # [Dev-Ассистент]: НАЧАЛО ИЗМЕНЕНИЙ
+    # [Dev-Ассистент]: Собираем новую клавиатуру с двумя кнопками.
+    char_id = context.user_data.get(TEMP_CHAR_ID)
+    keyboard = [
+        # [Dev-Ассистент]: Новая кнопка, которая будет запрашивать файл.
+        [InlineKeyboardButton("📄 Показать полный промпт в файле txt", callback_data=f"show_full_prompt_{char_id}")],
+        # [Dev-Ассистент]: Старая кнопка отмены.
+        [InlineKeyboardButton("❌ Отмена", callback_data=f"cancel_edit_action_{char_id}")]
+    ]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
 async def select_char_to_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, **kwargs) -> None:
     query = update.callback_query
     char_id = int(query.data.replace("delete_select_", ""))

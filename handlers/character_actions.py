@@ -9,6 +9,7 @@ from telegram.helpers import escape_markdown
 import asyncio
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 import database as db
+from io import BytesIO
 import config  # <<< Импортируем config
 from constants import * # <<< Здесь остаются все константы
 from utils import delete_message_callback, get_text_content_from_document
@@ -17,7 +18,25 @@ from . import character_menus
 logger = logging.getLogger(__name__)
 
 class FileSizeError(Exception): pass
-    
+
+async def handle_show_full_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix: str) -> None:
+    """Отправляет пользователю полный текст текущего промпта в виде .txt файла."""
+    query = update.callback_query
+    # [Dev-Ассистент]: Просто сообщаем пользователю, что мы работаем.
+    await query.answer("Отправляю полный промпт...")
+
+    # [Dev-Ассистент]: Берем текст промпта из временного хранилища.
+    full_prompt = context.user_data.get(TEMP_CHAR_PROMPT, "Текст промпта не найден.")
+
+    # [Dev-Ассистент]: Создаем "виртуальный" файл в памяти.
+    prompt_bytes = full_prompt.encode('utf-8')
+    prompt_file = BytesIO(prompt_bytes)
+
+    # [Dev-Ассистент]: Отправляем документ отдельным сообщением.
+    await query.message.reply_document(
+        document=prompt_file,
+        filename="full_prompt.txt"
+    )
 # ... остальная часть файла character_actions.py остается без изменений ...
 async def get_user_id(update: Update) -> int:
     return await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
