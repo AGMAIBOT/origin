@@ -39,7 +39,18 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
             supports_vision=True,
             file_char_limit=config.FILE_PROCESSING_LIMITS.get(provider_identifier, 0)
         )
-        
+
+    # --- Маршрутизация к OpenAI GPT-o4-mini ---
+    elif provider_identifier == GPT_O4_MINI:
+        if not OPENAI_API_KEY: raise ValueError("API ключ для OpenAI не найден.")
+        # [Dev-Ассистент]: Мы создаем тот же GPTClient, но передаем ему новое имя модели из конфига.
+        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name=config.GPT_4O_MINI_MODEL)
+        return AIClientCapabilities(
+            client=client,
+            supports_vision=True, # [Dev-Ассистент]: gpt-4o-mini тоже поддерживает vision.
+            file_char_limit=config.FILE_PROCESSING_LIMITS.get(provider_identifier, 0)
+        )
+   
     # --- Маршрутизация к DeepSeek ---
     elif provider_identifier == DEEPSEEK_CHAT:
         if not DEEPSEEK_API_KEY: raise ValueError("API ключ для DeepSeek не найден.")

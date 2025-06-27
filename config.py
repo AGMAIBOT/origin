@@ -1,6 +1,6 @@
 # ПАГИНАЦИЯ, РЕФЛЕКТОРИНГ
 
-
+from constants import GEMINI_STANDARD, GPT_4_OMNI, GPT_O4_MINI, OPENROUTER_DEEPSEEK, OPENROUTER_GEMINI_2_FLASH
 
 # --- Настройки AI моделей ---
 # Имена моделей, которые мы используем. Легко поменять в одном месте.
@@ -9,14 +9,12 @@ DEEPSEEK_CHAT_MODEL = "deepseek/deepseek-r1-0528:free"
 GPT_4_OMNI_MODEL = "gpt-4.1-nano"
 GPT_3_5_TURBO_MODEL = "gpt-3.5-turbo"
 GEMINI_2_FLASH_EXP_MODEL = "google/gemini-2.0-flash-exp:free"
-
-
+GPT_4O_MINI_MODEL = "o4-mini-2025-04-16"
 
 # --- Настройки тарифов ---
 # Это "правила игры" для каждого тарифа.
 # Имена провайдеров (GEMINI_STANDARD) импортируются из constants.py,
 # так как они являются частью "законов физики" приложения.
-from constants import GEMINI_STANDARD, GPT_4_OMNI, OPENROUTER_DEEPSEEK, OPENROUTER_GEMINI_2_FLASH
 
 SUBSCRIPTION_TIERS = {
     'free': {
@@ -58,6 +56,7 @@ FILE_PROCESSING_LIMITS = {
     
     # Для GPT-4o ставим более консервативный лимит, чтобы избежать ошибок
     # и больших затрат. 25000 символов ~ 6-8 тыс. токенов.
+    GPT_O4_MINI: 25000,
     GPT_4_OMNI: 25000,
     OPENROUTER_DEEPSEEK: 15000,
     OPENROUTER_GEMINI_2_FLASH: 30000,

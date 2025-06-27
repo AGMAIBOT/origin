@@ -6,7 +6,7 @@ from telegram.error import BadRequest
 
 import database as db
 from constants import (
-    TIER_PRO, GEMINI_STANDARD, OPENROUTER_DEEPSEEK, GPT_4_OMNI, 
+    TIER_PRO, GEMINI_STANDARD, OPENROUTER_DEEPSEEK, GPT_4_OMNI, GPT_O4_MINI,
     OPENROUTER_GEMINI_2_FLASH, STATE_WAITING_FOR_IMAGE_PROMPT, STATE_NONE,
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, CURRENT_IMAGE_GEN_PROVIDER_KEY
 )
@@ -36,6 +36,7 @@ async def show_text_ai_selection_menu(update: Update, context: ContextTypes.DEFA
         "Ваш текущий выбор:"
     )
     keyboard = [
+        [InlineKeyboardButton(("✅ " if current_provider == GPT_O4_MINI else "") + "GPT-4o-mini (умный, vision)", callback_data=f"select_ai_{GPT_O4_MINI}")],
         [InlineKeyboardButton(("✅ " if current_provider == GPT_4_OMNI else "") + "GPT-4.1 nano (быстрый, vision)", callback_data=f"select_ai_{GPT_4_OMNI}")],
         [InlineKeyboardButton(("✅ " if current_provider == GEMINI_STANDARD else "") + "Gemini 1.5 Flash (креативный, vision)", callback_data=f"select_ai_{GEMINI_STANDARD}")],
         [InlineKeyboardButton(("✅ " if current_provider == OPENROUTER_DEEPSEEK else "") + "DeepSeek (free OR)", callback_data=f"select_ai_{OPENROUTER_DEEPSEEK}")],
@@ -148,6 +149,7 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
             GEMINI_STANDARD: "Gemini 1.5 Flash",
             OPENROUTER_DEEPSEEK: "DeepSeek (OpenRouter)",
             GPT_4_OMNI: "GPT-4.1 nano",
+            GPT_O4_MINI: "GPT-o4-mini",
             OPENROUTER_GEMINI_2_FLASH: "Gemini 2.0 Flash (экспериментальный)"
         }
         provider_name = provider_names.get(new_provider, "Неизвестная модель")
