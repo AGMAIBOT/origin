@@ -1,5 +1,3 @@
-# handlers/character_actions.py (ИСПРАВЛЕННАЯ ВЕРСИЯ)
-
 import html
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -10,37 +8,102 @@ import asyncio
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 import database as db
 from io import BytesIO
-import config  # <<< Импортируем config
-from constants import * # <<< Здесь остаются все константы
+import config
+from constants import *
 from utils import delete_message_callback, get_text_content_from_document
 from . import character_menus
 
 logger = logging.getLogger(__name__)
 
+# --- Вспомогательные функции (остаются без изменений) ---
 class FileSizeError(Exception): pass
-
-async def handle_show_full_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix: str) -> None:
-    """Отправляет пользователю полный текст текущего промпта в виде .txt файла."""
-    query = update.callback_query
-    # [Dev-Ассистент]: Просто сообщаем пользователю, что мы работаем.
-    await query.answer("Отправляю полный промпт...")
-
-    # [Dev-Ассистент]: Берем текст промпта из временного хранилища.
-    full_prompt = context.user_data.get(TEMP_CHAR_PROMPT, "Текст промпта не найден.")
-
-    # [Dev-Ассистент]: Создаем "виртуальный" файл в памяти.
-    prompt_bytes = full_prompt.encode('utf-8')
-    prompt_file = BytesIO(prompt_bytes)
-
-    # [Dev-Ассистент]: Отправляем документ отдельным сообщением.
-    await query.message.reply_document(
-        document=prompt_file,
-        filename="full_prompt.txt"
-    )
-# ... остальная часть файла character_actions.py остается без изменений ...
 async def get_user_id(update: Update) -> int:
     return await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
-async def handle_new_char_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+# --- НОВЫЙ БЛОК: Логика для "Карточек персонажей" ---
+
+async def show_character_card(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix: str):
+    """
+    [Dev-Ассистент]: НОВАЯ ФУНКЦИЯ. Показывает детальную информацию о персонаже (карточку).
+    """
+    query = update.callback_query
+    await query.answer()
+
+    is_custom = prefix == "show_custom_char_"
+    char_id = None
+    char_name = ""
+    description = ""
+
+    if is_custom:
+        char_id = int(query.data.replace(prefix, ""))
+        char_data = await db.get_character_by_id(char_id)
+        if not char_data:
+            return await query.edit_message_text("Ошибка: персонаж не найден.")
+        char_name = char_data['name']
+        description = char_data['prompt'] # У кастомных персонажей описание - это их промпт
+    else:
+        char_name = query.data.replace(prefix, "")
+        char_info = ALL_PROMPTS.get(char_name)
+        if not char_info:
+            return await query.edit_message_text("Ошибка: персонаж не найден.")
+        description = char_info.get('description', 'Описание для этого персонажа не задано.')
+
+    # [Dev-Ассистент]: Собираем текст для карточки.
+    text = f"🎭 *{escape_markdown(char_name, version=2)}*\n\n{escape_markdown(description, version=2)}"
+
+    # [Dev-Ассистент]: Собираем клавиатуру для карточки.
+    # [Dev-Ассистент]: Важно передать идентификатор (имя или ID) в кнопку подтверждения.
+    confirm_callback_data = f"confirm_custom_char_{char_id}" if is_custom else f"confirm_char_{char_name}"
+    
+    keyboard = [
+        [InlineKeyboardButton(f"✅ Выбрать этого персонажа", callback_data=confirm_callback_data)],
+        # [Dev-Ассистент]: Кнопка "Назад" зависит от типа персонажа.
+        [InlineKeyboardButton("⬅️ Назад к списку", callback_data="back_to_custom_list" if is_custom else "back_to_standard_list")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='MarkdownV2')
+
+async def confirm_character_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix: str):
+    """
+    [Dev-Ассистент]: НОВАЯ ФУНКЦИЯ. Выполняет фактический выбор персонажа и возвращает к списку.
+    """
+    query = update.callback_query
+    user_id = await get_user_id(update)
+    is_custom = prefix == "confirm_custom_char_"
+    char_name = ""
+
+    if is_custom:
+        char_id = int(query.data.replace(prefix, ""))
+        char_data = await db.get_character_by_id(char_id)
+        if not char_data:
+            return await query.answer("Персонаж не найден (возможно, удален).", show_alert=True)
+        char_name = char_data['name']
+    else:
+        char_name = query.data.replace(prefix, "")
+
+    await query.answer(f"Выбран персонаж: {char_name}")
+    await db.set_current_character(user_id, char_name)
+
+    # [Dev-Ассистент]: После выбора мы должны вернуться к соответствующему списку.
+    if is_custom:
+        await character_menus.show_paginated_custom_characters_menu(update, context)
+    else:
+        await character_menus.show_standard_characters_menu(update, context)
+
+
+# --- Старый блок для управления персонажами (создание, редактирование, удаление) ---
+# --- Этот код остается без изменений, так как он не затрагивает логику выбора ---
+async def handle_show_full_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix: str):
+    query = update.callback_query
+    await query.answer("Отправляю полный промпт...")
+    full_prompt = context.user_data.get(TEMP_CHAR_PROMPT, "Текст промпта не найден.")
+    prompt_bytes = full_prompt.encode('utf-8')
+    prompt_file = BytesIO(prompt_bytes)
+    await query.message.reply_document(document=prompt_file, filename="full_prompt.txt")
+
+async def handle_new_char_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (код без изменений)
     char_name = update.message.text.strip()
     user_id = await get_user_id(update)
     if char_name in ALL_PROMPTS:
@@ -52,6 +115,7 @@ async def handle_new_char_name_input(update: Update, context: ContextTypes.DEFAU
     context.user_data[TEMP_CHAR_NAME] = char_name
     context.user_data['state'] = STATE_WAITING_FOR_NEW_CHAR_PROMPT
     await update.message.reply_text(f"Имя '{char_name}' принято. Теперь введите промпт (текстом или .txt файлом):")
+    
 async def handle_new_char_prompt_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     char_name = context.user_data.get(TEMP_CHAR_NAME)
     try:
@@ -128,48 +192,38 @@ async def handle_select_character(update: Update, context: ContextTypes.DEFAULT_
         char_name = char_data['name']
     else:
         char_name = query.data.replace(prefix, "")
-
-    # ==========================================================
-    # [Dev-Ассистент]: НАЧАЛО "ШПИОНСКОГО" КОДА ДЛЯ ОТЛАДКИ
-    # Этот блок не меняет логику, а только выводит информацию в консоль.
-    # ==========================================================
-    logger.info("--- Шпионский отчет ---")
-    logger.info(f"[DEBUG] 1. Имя персонажа из кнопки: '{char_name}'")
-    logger.info(f"[DEBUG] 2. Ключи, доступные в ALL_PROMPTS: {list(ALL_PROMPTS.keys())}")
     
-    char_info = ALL_PROMPTS.get(char_name)
-    logger.info(f"[DEBUG] 3. Найденная информация (char_info): {char_info}")
-    logger.info("--- Конец отчета ---")
-    # ==========================================================
-    # [Dev-Ассистент]: КОНЕЦ "ШПИОНСКОГО" КОДА
-    # ==========================================================
-
     user_data = await db.get_user_by_id(user_id)
     if user_data and user_data['current_character_name'] == char_name:
+        # [Dev-Ассистент]: Мы оставим простое уведомление, что персонаж уже выбран.
+        # [Dev-Ассистент]: Оно не мешает и является полезной обратной связью.
         await query.answer(f"Персонаж '{char_name}' уже выбран.")
         return
 
+    # [Dev-Ассистент]: НАЧАЛО ИЗМЕНЕНИЙ
+    # [Dev-Ассистент]: Мы просто отвечаем на callback пустым ответом.
+    # [Dev-Ассистент]: Это убирает "часики" на кнопке, но не показывает никакого уведомления.
+    await query.answer()
+    # [Dev-Ассистент]: Весь блок кода, который отвечал за показ описания и alert,
+    # [Dev-Ассистент]: мы просто закомментировали. Он не выполняется, но остается в коде
+    # [Dev-Ассистент]: на случай, если мы захотим его вернуть.
+    """
     description_to_show = f"Выбран персонаж: {char_name}"
     is_alert = False
 
-    # [Dev-Ассистент]: Теперь используем 'char_info', который мы уже получили для отладки
+    char_info = ALL_PROMPTS.get(char_name)
     if not is_custom and char_info:
-        # [Dev-Ассистент]: Сначала получаем описание из загруженных данных.
-        # [Dev-Ассистент]: Если его нет, вернется стандартная фраза-заглушка.
         description_to_show = char_info.get('description', 'Описание для этого персонажа не задано.')
-        
-        # [Dev-Ассистент]: ВОТ НОВАЯ, ПРОСТАЯ ЛОГИКА.
-        # [Dev-Ассистент]: Мы проверяем только одно: если описание персонажа
-        # [Dev-Ассистент]: НЕ является стандартной фразой-заглушкой,
-        # [Dev-Ассистент]: значит, оно было задано в файле, и мы показываем alert.
         if description_to_show != 'Описание для этого персонажа не задано.':
             is_alert = True
 
     await query.answer(text=description_to_show, show_alert=is_alert)
+    """
+    # [Dev-Ассистент]: КОНЕЦ ИЗМЕНЕНИЙ
 
     await db.set_current_character(user_id, char_name)
 
-    # Обновляем клавиатуру, чтобы на кнопке появилась галочка
+    # [Dev-Ассистент]: Остальная часть функции остается без изменений.
     try:
         if is_custom:
             await character_menus.show_paginated_custom_characters_menu(update, context)

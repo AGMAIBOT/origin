@@ -20,6 +20,7 @@ def clear_temp_state(context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop(TEMP_CHAR_PROMPT, None)
 async def get_user_id(update: Update) -> int:
     return await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
+
 async def _build_standard_character_keyboard(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
     user = await db.get_user_by_id(user_id)
     current_char_name = user['current_character_name'] if user else DEFAULT_CHARACTER_NAME
@@ -37,7 +38,9 @@ async def _build_standard_character_keyboard(user_id: int, context: ContextTypes
             if i + j < len(characters_on_page):
                 char_name = characters_on_page[i+j]
                 display_name = f"✅ {escape_markdown(char_name, version=2)}" if char_name == current_char_name else escape_markdown(char_name, version=2)
-                row.append(InlineKeyboardButton(display_name, callback_data=f"select_char_{char_name}"))
+                # [Dev-Ассистент]: КЛЮЧЕВОЕ ИЗМЕНЕНИЕ! Меняем префикс с 'select_char_' на 'show_char_'.
+                # [Dev-Ассистент]: Теперь нажатие на эту кнопку покажет карточку, а не выберет персонажа.
+                row.append(InlineKeyboardButton(display_name, callback_data=f"show_char_{char_name}"))
         keyboard.append(row)
     pagination_row = []
     if current_page > 0: pagination_row.append(InlineKeyboardButton("⬅️", callback_data="prev_char_page"))
@@ -46,6 +49,7 @@ async def _build_standard_character_keyboard(user_id: int, context: ContextTypes
     if pagination_row: keyboard.append(pagination_row)
     keyboard.append([InlineKeyboardButton("⬅️ Назад к категориям", callback_data="back_to_categories")])
     return InlineKeyboardMarkup(keyboard)
+
 async def _build_paginated_custom_char_keyboard(user_id: int, custom_chars: list, context: ContextTypes.DEFAULT_TYPE, mode: str) -> InlineKeyboardMarkup:
     page_key = CURRENT_CHAR_VIEW_PAGE_KEY if mode == 'view' else CURRENT_CHAR_MANAGE_PAGE_KEY
     current_page = context.user_data.get(page_key, 0)
@@ -53,8 +57,11 @@ async def _build_paginated_custom_char_keyboard(user_id: int, custom_chars: list
     start_index = current_page * config.CHARACTERS_PER_PAGE
     end_index = start_index + config.CHARACTERS_PER_PAGE
     characters_on_page = custom_chars[start_index:end_index]
-    action_prefixes = {'view': ("select_custom_char_", ""), 'edit': ("select_to_edit_", "🔧 "), 'delete': ("delete_select_", "🗑️ ")}
+    
+    # [Dev-Ассистент]: ИЗМЕНЕНИЕ! Для режима 'view' теперь тоже используется новый префикс.
+    action_prefixes = {'view': ("show_custom_char_", ""), 'edit': ("select_to_edit_", "🔧 "), 'delete': ("delete_select_", "🗑️ ")}
     callback_prefix, icon = action_prefixes[mode]
+    
     keyboard = []
     current_char_name = ""
     if mode == 'view':
@@ -83,6 +90,7 @@ async def _build_paginated_custom_char_keyboard(user_id: int, custom_chars: list
     back_callbacks = {'view': "my_custom_characters_hub", 'edit': "back_to_manage_chars", 'delete': "back_to_manage_chars"}
     keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data=back_callbacks[mode])])
     return InlineKeyboardMarkup(keyboard)
+
 async def show_character_categories_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = "Выберите категорию персонажей:"
     keyboard = [[InlineKeyboardButton("🗣️ Разговорные", callback_data="category_conversational")],
