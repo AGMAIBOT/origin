@@ -28,7 +28,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 from io import BytesIO
 from PIL import Image
-from telegram import Update, BotCommand
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 # [Dev-Ассистент]: Добавляем filters.VOICE для обработки голосовых
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.helpers import escape_markdown
@@ -159,57 +159,90 @@ async def show_wip_notice(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 @require_verification
 @inject_user_data
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
-    # ... (эта функция остается без изменений) ...
+    # [Dev-Ассистент]: Вся логика ниже была переработана для надежности.
     current_state = context.user_data.get('state', STATE_NONE)
+
+    # --- Обработка режима генерации изображений ---
     if current_state == STATE_WAITING_FOR_IMAGE_PROMPT:
         prompt_text = update.message.text
         if not prompt_text:
             await update.message.reply_text("Пожалуйста, отправьте текстовое описание для картинки.")
             return
+
         image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
+
+        # --- Логика для DALL-E 3 ---
         if image_gen_provider == IMAGE_GEN_DALL_E_3:
-            context.user_data['state'] = STATE_NONE
+            # [Dev-Ассистент]: 1. Немедленно отвечаем пользователю и ставим статус.
             await update.message.reply_text("🎨 Принято! Начинаю рисовать через DALL-E 3, это может занять до минуты...")
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+
             try:
+                # [Dev-Ассистент]: 2. Выполняем основную работу в блоке try.
                 caps = get_ai_client_with_caps(GPT_4_OMNI, system_instruction="You are an image generation assistant.")
                 image_url, error_message = await caps.client.generate_image(prompt_text)
-                if error_message: await update.message.reply_text(f"😔 Ошибка: {error_message}")
-                elif image_url: await update.message.reply_photo(photo=image_url, caption=f"✨ Ваше изображение по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
-                else: await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+
+                if error_message:
+                    await update.message.reply_text(f"😔 Ошибка: {error_message}")
+                    # [Dev-Ассистент]: При ошибке НЕ сбрасываем состояние, чтобы пользователь мог попробовать снова.
+                elif image_url:
+                    await update.message.reply_photo(photo=image_url, caption=f"✨ Ваше изображение по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
+                    # [Dev-Ассистент]: 3. Сбрасываем состояние ТОЛЬКО после успешного выполнения.
+                    context.user_data['state'] = STATE_NONE
+                else:
+                    await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+
             except Exception as e:
                 logger.error(f"Критическая ошибка в блоке генерации DALL-E 3: {e}", exc_info=True)
                 await update.message.reply_text(f"Произошла критическая ошибка: {e}")
+
+        # --- Логика для YandexArt ---
         elif image_gen_provider == IMAGE_GEN_YANDEXART:
-            # [Dev-Ассистент]: ДОБАВЛЕНА ПРОВЕРКА НА ДЛИНУ ПРОМПТА
             if len(prompt_text) > config.YANDEXART_PROMPT_LIMIT:
+                cancel_button = InlineKeyboardButton("❌ Отмена", callback_data="image_gen_cancel")
+                reply_markup = InlineKeyboardMarkup([[cancel_button]])
                 await update.message.reply_text(
                     f"😔 Ваш запрос для YandexArt слишком длинный.\n\n"
                     f"Максимум: {config.YANDEXART_PROMPT_LIMIT} символов. У вас: {len(prompt_text)}.\n\n"
-                    f"Пожалуйста, сократите описание и попробуйте снова."
+                    f"Пожалуйста, сократите описание и попробуйте снова, или отмените операцию.",
+                    reply_markup=reply_markup
                 )
-                # [Dev-Ассистент]: Важно выйти из функции, чтобы не отправлять запрос в API
                 return
 
-            context.user_data['state'] = STATE_NONE
+            # [Dev-Ассистент]: 1. Немедленно отвечаем пользователю и ставим статус.
             await update.message.reply_text("🎨 Принято! Отправляю запрос в YandexArt, это может занять до 2 минут...")
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+            
             try:
+                # [Dev-Ассистент]: 2. Выполняем основную работу в блоке try.
                 yandex_client = YandexArtClient(
                     folder_id=os.getenv("YANDEX_FOLDER_ID"),
                     api_key=os.getenv("YANDEX_API_KEY")
                 )
                 image_bytes, error_message = await yandex_client.generate_image(prompt_text)
-                if error_message: await update.message.reply_text(f"😔 Ошибка: {error_message}")
-                elif image_bytes: await update.message.reply_photo(photo=image_bytes, caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
-                else: await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+
+                if error_message:
+                    await update.message.reply_text(f"😔 Ошибка: {error_message}")
+                    # [Dev-Ассистент]: При ошибке НЕ сбрасываем состояние.
+                elif image_bytes:
+                    await update.message.reply_photo(photo=image_bytes, caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
+                    # [Dev-Ассистент]: 3. Сбрасываем состояние ТОЛЬКО после успешного выполнения.
+                    context.user_data['state'] = STATE_NONE
+                else:
+                    await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+
             except Exception as e:
                 logger.error(f"Критическая ошибка в блоке генерации YandexArt: {e}", exc_info=True)
                 await update.message.reply_text(f"Произошла критическая ошибка: {e}")
+
         else:
-            context.user_data['state'] = STATE_NONE
             await update.message.reply_text("Произошла ошибка: не выбран AI для генерации. Пожалуйста, начните сначала из меню.")
+            context.user_data['state'] = STATE_NONE # [Dev-Ассистент]: Сбрасываем состояние при неизвестной ошибке.
+        
+        # [Dev-Ассистент]: Важно! Этот return гарантирует, что остальной код handle_message не будет выполнен.
         return
+    
+
     if await characters_handler.handle_stateful_message(update, context):
         return
     tier_params = config.SUBSCRIPTION_TIERS[await get_actual_user_tier(user_data)]

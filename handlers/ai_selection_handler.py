@@ -13,14 +13,18 @@ from constants import (
 
 async def show_ai_mode_selection_hub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает главное меню выбора режима: Текст или Изображения."""
+    # [Dev-Ассистент]: Как только он входит в этот "хаб", мы принудительно снимаем
+    # [Dev-Ассистент]: с бота любую специфическую "шляпу" (например, фотографа).
+    context.user_data['state'] = STATE_NONE
+
     text = "🤖 *Выберите режим работы AI*\n\nВыберите, что вы хотите делать: общаться с текстовой моделью или генерировать/редактировать изображения."
     keyboard = [
         [InlineKeyboardButton("📝 Текстовые модели", callback_data="select_mode_text")],
         [InlineKeyboardButton("🎨 Генерация изображений", callback_data="select_mode_image")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+
     if update.callback_query:
-        context.user_data['state'] = STATE_NONE
         await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
@@ -36,8 +40,8 @@ async def show_text_ai_selection_menu(update: Update, context: ContextTypes.DEFA
         "Ваш текущий выбор:"
     )
     keyboard = [
-        [InlineKeyboardButton(("✅ " if current_provider == GPT_O4_MINI else "") + "GPT-4o-mini (умный, vision)", callback_data=f"select_ai_{GPT_O4_MINI}")],
-        [InlineKeyboardButton(("✅ " if current_provider == GPT_4_OMNI else "") + "GPT-4.1 nano (быстрый, vision)", callback_data=f"select_ai_{GPT_4_OMNI}")],
+        [InlineKeyboardButton(("✅ " if current_provider == GPT_O4_MINI else "") + "GPT-o4-mini (умный, vision)", callback_data=f"select_ai_{GPT_O4_MINI}")],
+        [InlineKeyboardButton(("✅ " if current_provider == GPT_4_OMNI else "") + "GPT-4.1-nano (быстрый, vision)", callback_data=f"select_ai_{GPT_4_OMNI}")],
         [InlineKeyboardButton(("✅ " if current_provider == GEMINI_STANDARD else "") + "Gemini 1.5 Flash (креативный, vision)", callback_data=f"select_ai_{GEMINI_STANDARD}")],
         [InlineKeyboardButton(("✅ " if current_provider == OPENROUTER_DEEPSEEK else "") + "DeepSeek (free OR)", callback_data=f"select_ai_{OPENROUTER_DEEPSEEK}")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_ai_mode_hub")]
@@ -89,6 +93,17 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
     query = update.callback_query
     if not query: return False
 
+    # [Dev-Ассистент]: НОВЫЙ БЛОК. Добавляем обработчик для нашей кнопки отмены.
+    # [Dev-Ассистент]: Он должен стоять до основной логики, чтобы перехватывать этот callback.
+    if query.data == "image_gen_cancel":
+        # 1. Самое главное - "снимаем шляпу фотографа", сбрасывая состояние.
+        context.user_data['state'] = STATE_NONE
+        # 2. Сообщаем пользователю, что все отменено.
+        await query.answer("Операция отменена")
+        # 3. Возвращаем пользователя в меню выбора действий с изображением, чтобы он мог начать заново или уйти.
+        await show_image_ai_selection_menu(update, context)
+        return True # Сообщаем, что callback обработан.
+
     # --- Маршрутизация по главным меню ---
     if query.data == "select_mode_text":
         await query.answer()
@@ -115,32 +130,27 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
         await query.answer("Эта функция находится в активной разработке.", show_alert=True)
         return True
 
-    # <<< ИЗМЕНЕНИЕ: Обработчик теперь универсальный и активирует YandexArt >>>
     if query.data.startswith("select_image_gen_"):
         image_gen_provider = query.data.replace("select_image_gen_", "")
         
-        # Словарь для красивых имен моделей
         provider_names = {
             IMAGE_GEN_DALL_E_3: "GPT (DALL-E 3)",
             IMAGE_GEN_YANDEXART: "YandexArt"
         }
         provider_name = provider_names.get(image_gen_provider, "Неизвестная модель")
 
-        # Сохраняем выбор пользователя в user_data. Это ключ к работе логики в main.py.
         context.user_data[CURRENT_IMAGE_GEN_PROVIDER_KEY] = image_gen_provider
         
-        # Сообщаем пользователю о выборе и запрашиваем промпт
         await query.answer(f"Выбрана модель: {provider_name}")
         await prompt_for_image_text(update, context)
         return True
 
     # --- Обработка выбора конкретной ТЕКСТОВОЙ модели ---
     if query.data.startswith("select_ai_"):
-        # [Dev-Ассистент]: ДОБАВЛЯЕМ ПРОВЕРКУ ТАРИФА ПЕРЕД СМЕНОЙ ПРОВАЙДЕРА
         user_data = await db.get_user_by_telegram_id(update.effective_user.id)
         if not user_data or user_data.get('subscription_tier') != TIER_PRO:
             await query.answer("Эта функция доступна только на Pro-тарифе.", show_alert=True)
-            return True # Возвращаем True, т.к. мы обработали этот callback
+            return True 
 
         new_provider = query.data.replace("select_ai_", "")
         user_id = update.effective_user.id
