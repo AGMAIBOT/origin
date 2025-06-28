@@ -2,15 +2,12 @@
 
 import logging
 from datetime import datetime 
-from telegram import ReplyKeyboardMarkup, KeyboardButton, Update
+from telegram import ReplyKeyboardMarkup, KeyboardButton, Update, InlineKeyboardMarkup
 from functools import wraps
 from telegram.ext import ContextTypes
 import config
-
-# [Dev-Ассистент]: Новые импорты для работы с аудио
 from io import BytesIO
 from pydub import AudioSegment
-
 import database as db
 from constants import TIER_FREE
 logger = logging.getLogger(__name__)
@@ -32,15 +29,37 @@ async def delete_message_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.warning(f"Не удалось удалить сообщение {job_data['message_id']} в чате {job_data['chat_id']}: {e}")
 
-async def send_long_message(update: Update, text: str):
-    """Разбивает длинное сообщение на части и отправляет их по отдельности."""
+async def send_long_message(
+    update: Update, 
+    context: ContextTypes.DEFAULT_TYPE, # [Dev-Ассистент]: Добавляем context для отправки сообщений
+    text: str, 
+    reply_markup: InlineKeyboardMarkup = None
+):
+    """
+    Разбивает длинное сообщение на части и отправляет их по отдельности.
+    [Dev-Ассистент]: Теперь умеет отправлять ответ как на сообщение, так и на callback.
+    """
+    # [Dev-Ассистент]: Определяем, куда отправлять ответ.
+    # Если есть message - это ответ на сообщение. Если нет - это ответ на callback, нужен chat_id.
+    message_to_reply = update.message or (update.callback_query and update.callback_query.message)
+    chat_id = message_to_reply.chat_id if message_to_reply else update.effective_chat.id
+
     max_length = 4096
     if len(text) <= max_length:
-        await update.message.reply_text(text)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup
+        )
     else:
         parts = [text[i:i + max_length] for i in range(0, len(text), max_length)]
-        for part in parts:
-            await update.message.reply_text(part)
+        for i, part in enumerate(parts):
+            current_reply_markup = reply_markup if i == len(parts) - 1 else None
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=part,
+                reply_markup=current_reply_markup
+            )
             
 async def get_actual_user_tier(user_data: dict) -> str:
     """

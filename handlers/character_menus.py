@@ -12,6 +12,19 @@ import config  # <<< Импортируем config
 from characters import DEFAULT_CHARACTER_NAME, CHARACTER_CATEGORIES
 from constants import * # <<< Импортируем константы
 
+CATEGORY_DESCRIPTIONS = {
+    "conversational": "А иногда ведь просто хочется поболтать по душам, без всяких там задач и серьезных решений, правда? Здесь тебя ждут персонажи, которые умеют слушать, слышать между строк и даже делиться своим настроением. Забудь про сухие факты – это те, кто готов просто быть рядом и разделить с тобой момент.",
+    "specialists": "Нужен дельный совет или помощь в сложной ситуации? В этом разделе собрались настоящие мастера своего дела! От технического гуру до знатока растений – каждый из них готов поделиться глубокими знаниями, дать практичные советы и помочь разобраться в любом вопросе. Они здесь, чтобы решать твои проблемы, а не просто слушать!",
+    "quest": "Надоело просто читать? Здесь ты – главный герой! Погружайся в захватывающие интерактивные миры, где каждый твой выбор реально меняет сюжет и ведет к одной из уникальных концовок. От пиратских приключений до борьбы за выживание — готовься, скучно точно не будет!",
+    # [Dev-Ассистент]: Ты можешь легко добавить описания для новых категорий здесь.
+}
+CATEGORY_DISPLAY_NAMES = {
+    "conversational": "Разговорные",
+    "specialists": "Специалисты",
+    "quest": "Ролевые игры (Quest)"
+}
+raw_text = "Добро пожаловать в уголок, где алгоритмы обретают... ну, почти душу! В разделе 'Персонажи' ты найдешь не просто наборы кода, а настоящих экспертов, готовых разрулить любую твою проблему; душевных собеседников, которые всегда поддержат разговор; и, конечно, харизматичных Мастеров квестов, что затянут тебя в эпические приключения. Выбери того, кто тебе по вкусу – и пусть начнется магия общения (или выживания)!"
+
 # ... остальная часть файла character_menus.py остается без изменений ...
 def clear_temp_state(context: ContextTypes.DEFAULT_TYPE):
     context.user_data['state'] = STATE_NONE
@@ -92,7 +105,7 @@ async def _build_paginated_custom_char_keyboard(user_id: int, custom_chars: list
     return InlineKeyboardMarkup(keyboard)
 
 async def show_character_categories_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = "Выберите категорию персонажей:"
+    text = (raw_text)
     keyboard = [[InlineKeyboardButton("🗣️ Разговорные", callback_data="category_conversational")],
                 [InlineKeyboardButton("🎓 Специалисты", callback_data="category_specialists")],
                 [InlineKeyboardButton("⚔️ Ролевые игры (Quest)", callback_data="category_quest")],
@@ -100,20 +113,42 @@ async def show_character_categories_menu(update: Update, context: ContextTypes.D
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
     else: await update.message.reply_text(text, reply_markup=reply_markup)
+
 async def show_standard_characters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, **kwargs) -> None:
     query = update.callback_query
     if query.data.startswith("category_"):
         category_name = query.data.replace("category_", "")
         context.user_data[CURRENT_CHAR_CATEGORY_KEY] = category_name
         context.user_data[CURRENT_CHAR_VIEW_PAGE_KEY] = 0
+    
     user_id = await get_user_id(update)
     reply_markup = await _build_standard_character_keyboard(user_id, context)
+    
     category_name = context.user_data.get(CURRENT_CHAR_CATEGORY_KEY, "conversational")
-    text = f"Категория: *{escape_markdown(category_name.capitalize(), version=2)}*\n\nВыберите персонажа:"
-    try: await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='MarkdownV2')
+    category_description = CATEGORY_DESCRIPTIONS.get(
+        category_name, 
+        "Выберите персонажа из этой категории:"
+    )
+    # 1. Получаем "красивое" имя из нашего нового словаря.
+    #    Если его там нет, просто используем старое с большой буквы.
+    display_category_name = CATEGORY_DISPLAY_NAMES.get(category_name, category_name.capitalize())
+
+    # 2. Используем это "красивое" имя в тексте.
+    text = (
+        f"Категория: *{escape_markdown(display_category_name, version=2)}*\n\n"
+        f"{escape_markdown(category_description, version=2)}\n"
+        f"Выберите персонажа:"
+    )
+    # [Dev-Ассистент]: КОНЕЦ ИЗМЕНЕНИЙ
+    
+    try: 
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='MarkdownV2')
     except BadRequest as e:
-        if "Message is not modified" in str(e): await query.answer()
-        else: raise
+        if "Message is not modified" in str(e): 
+            await query.answer()
+        else: 
+            raise
+        
 async def show_my_characters_hub_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = "🎭 *Мои Персонажи*"
     keyboard = [[InlineKeyboardButton("📖 Просмотр и выбор", callback_data="view_my_chars")],[InlineKeyboardButton("⚙️ Управление (создать, изменить, удалить)", callback_data="manage_custom_characters")],[InlineKeyboardButton("⬅️ Назад к категориям", callback_data="back_to_categories")]]

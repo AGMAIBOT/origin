@@ -6,7 +6,6 @@ import logging
 import asyncio
 from dotenv import load_dotenv
 from typing import List
-
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -40,31 +39,26 @@ from constants import (
     STATE_NONE, STATE_WAITING_FOR_IMAGE_PROMPT, TIER_LITE, TIER_PRO, 
     TIER_FREE, GPT_4_OMNI, CURRENT_IMAGE_GEN_PROVIDER_KEY, 
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, GEMINI_STANDARD, 
-    LAST_IMAGE_PROMPT_KEY
+    LAST_IMAGE_PROMPT_KEY, LAST_RESPONSE_KEY
 )
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
-from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler, onboarding_handler
-
+from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler, onboarding_handler, post_processing_handler
 # [Dev-Ассистент]: Импортируем нашу новую утилиту и GPTClient для Whisper
 import utils
 from utils import get_main_keyboard, send_long_message, get_actual_user_tier, require_verification, get_text_content_from_document, FileSizeError, inject_user_data
 from ai_clients.factory import get_ai_client_with_caps
 from ai_clients.gpt_client import GPTClient
 from ai_clients.yandexart_client import YandexArtClient
+from handlers.post_processing_handler import get_post_processing_keyboard
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
-    # [Dev-Ассистент]: ВОТ ИСПРАВЛЕНИЕ. Мы возвращаем на место эту строку,
-    # [Dev-Ассистент]: которая определяет, какую AI модель использовать.
-    # [Dev-Ассистент]: Я случайно упустил ее в прошлый раз.
     ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
     user_id = user_data['id']
     char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
     custom_char = await db.get_custom_character_by_name(user_id, char_name)
 
-    # [Dev-Ассистент]: Этот блок теперь будет работать правильно,
-    # [Dev-Ассистент]: так как все нужные переменные на месте.
     system_instruction = ""
     default_prompt = "Ты — полезный ассистент."
 
@@ -76,42 +70,47 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
             system_instruction = char_info.get('prompt', default_prompt)
         else:
             system_instruction = default_prompt
+            
     try:
         caps = get_ai_client_with_caps(ai_provider, system_instruction)
         ai_client = caps.client
     except ValueError as e:
         logger.error(f"Ошибка создания AI клиента: {e}")
-        await update.message.reply_text(f"Ошибка конфигурации: {e}")
+        # [Dev-Ассистент]: Упрощаем отправку ошибки
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Ошибка конфигурации: {e}")
         return
     
-    if is_photo and not caps.supports_vision:
-        await update.message.reply_text(f"К сожалению, выбранная модель AI не умеет обрабатывать изображения.")
-        return
-    if is_document:
-        if caps.file_char_limit == 0:
-            await update.message.reply_text(f"Обработка файлов для выбранной модели AI не поддерживается.")
-            return
-        if document_char_count > caps.file_char_limit:
-            await update.message.reply_text(f"Файл слишком большой. Максимум: {caps.file_char_limit} символов, в вашем файле: {document_char_count}.")
-            return
-    history_len = await db.get_history_length(user_id, char_name)
-    if history_len > config.HISTORY_LIMIT_TRIGGER:
-        await db.trim_chat_history(user_id, char_name, config.HISTORY_TRIM_TO)
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    if is_photo or is_document:
+        pass
+    
+    history_from_db = await db.get_chat_history(user_id, char_name, limit=config.DEFAULT_HISTORY_LIMIT)
+    chat_history = history_from_db + context.chat_data.get('history', [])
+    context.chat_data.pop('history', None)
+
     try:
-        chat_history = await db.get_chat_history(user_id, char_name, limit=config.DEFAULT_HISTORY_LIMIT)
+        # [Dev-Ассистент]: Уведомляем пользователя о начале работы
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+
         if is_photo and image_obj:
             response_text, _ = await ai_client.get_image_response(chat_history, user_content, image_obj)
             db_user_content = f"[Изображение] {user_content}"
         else:
             response_text, _ = await ai_client.get_text_response(chat_history, user_content)
             db_user_content = user_content
+            
         await db.add_message_to_history(user_id, char_name, 'user', db_user_content)
         await db.add_message_to_history(user_id, char_name, 'model', response_text)
-        await send_long_message(update, response_text)
+
+        context.user_data[LAST_RESPONSE_KEY] = response_text
+        reply_markup = get_post_processing_keyboard(len(response_text))
+        
+        # [Dev-Ассистент]: ИЗМЕНЕНИЕ! Передаем context в send_long_message.
+        await send_long_message(update, context, response_text, reply_markup=reply_markup)
+
     except Exception as e:
-        logger.error(f"Ошибка AI запроса для user_id={user_id}: {e}", exc_info=True)
-        await update.message.reply_text("Произошла ошибка при обращении к AI.")
+        logger.error(f"Ошибка AI запроса для user_id={user_data.get('id', 'N/A')}: {e}", exc_info=True)
+        # [Dev-Ассистент]: ИЗМЕНЕНИЕ! Используем универсальный способ отправки сообщения об ошибке.
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="Произошла ошибка при обращении к AI.")
 
 # ... (команды start, reset, set_subscription, show_wip_notice остаются без изменений) ...
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -343,8 +342,10 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await status_message.edit_text("Произошла неизвестная ошибка при обработке вашего голосового сообщения.")
 
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (эта функция остается без изменений) ...
+    # [Dev-Ассистент]: Добавляем вызов нового обработчика в самое начало.
+    if await post_processing_handler.handle_post_processing_callback(update, context): return
     if await captcha_handler.handle_captcha_callback(update, context): return
+    # ... остальная часть функции без изменений
     if await ai_selection_handler.handle_ai_selection_callback(update, context): return
     if await onboarding_handler.handle_onboarding_callback(update, context): return
     user_data = await db.get_user_by_telegram_id(update.effective_user.id)

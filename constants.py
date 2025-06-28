@@ -41,3 +41,10 @@ OPENROUTER_DEEPSEEK = "openrouter_deepseek"
 OPENROUTER_GEMINI_2_FLASH = "openrouter_gemini_2_flash"
 IMAGE_GEN_DALL_E_3 = "image_gen_dalle3"
 IMAGE_GEN_YANDEXART = "image_gen_yandexart"
+
+# Константы для пост-обработки текста.
+LAST_RESPONSE_KEY = "last_response_text" # Ключ для хранения последнего ответа AI
+# Ключи для callback_data
+ACTION_SHORTEN = "action_shorten"
+ACTION_EXPAND = "action_expand"
+ACTION_REPHRASE = "action_rephrase"
