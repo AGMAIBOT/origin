@@ -8,8 +8,13 @@ import database as db
 from constants import (
     TIER_PRO, GEMINI_STANDARD, OPENROUTER_DEEPSEEK, GPT_4_OMNI, GPT_O4_MINI,
     OPENROUTER_GEMINI_2_FLASH, STATE_WAITING_FOR_IMAGE_PROMPT, STATE_NONE,
-    IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, CURRENT_IMAGE_GEN_PROVIDER_KEY
+    IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, CURRENT_IMAGE_GEN_PROVIDER_KEY,
+    LAST_IMAGE_PROMPT_KEY
 )
+from ai_clients.yandexart_client import YandexArtClient
+from telegram.constants import ChatAction
+import os
+import logging
 
 async def show_ai_mode_selection_hub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает главное меню выбора режима: Текст или Изображения."""
@@ -72,15 +77,44 @@ async def show_image_generation_ai_selection_menu(update: Update, context: Conte
     await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
 
 async def prompt_for_image_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переводит бота в режим ожидания промпта для генерации изображения."""
+    """
+    Переводит бота в режим ожидания промпта для генерации изображения.
+    [Dev-Ассистент]: Теперь эта функция умная: она либо редактирует существующее
+    [Dev-Ассистент]: текстовое сообщение, либо отправляет новое, если вызвана из-под фото.
+    """
     context.user_data['state'] = STATE_WAITING_FOR_IMAGE_PROMPT
     
     text = "🖼️ *Режим генерации изображений*\n\nЧто нарисовать? Отправьте мне подробное текстовое описание."
+    
+    # [Dev-Ассистент]: Здесь мы используем ту же кнопку "Отмена", что и в других местах.
+    # [Dev-Ассистент]: Но теперь она ведет в меню выбора генераторов, что логично.
     keyboard = [
-        [InlineKeyboardButton("❌ Отмена", callback_data="image_gen_create")]
+        [InlineKeyboardButton("⬅️ Назад", callback_data="image_gen_create")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+    query = update.callback_query
+    
+    # [Dev-Ассистент]: НАЧАЛО НОВОЙ ЛОГИКИ
+    # [Dev-Ассистент]: Проверяем, есть ли у сообщения, с которого пришел callback, текстовое поле.
+    # [Dev-Ассистент]: Сообщения с фото его не имеют, поэтому эта проверка вернет False.
+    if query and query.message and query.message.text:
+        # [Dev-Ассистент]: Сценарий 1: Мы пришли из текстового меню. Редактируем сообщение.
+        try:
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        except BadRequest as e:
+            if "Message is not modified" in str(e):
+                await query.answer() # Просто отвечаем на колбэк, если текст не изменился
+            else:
+                raise # Перебрасываем другие ошибки
+    else:
+        # [Dev-Ассистент]: Сценарий 2: Мы пришли из-под фото. Отправляем новое сообщение.
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
 
 
 async def set_ai_provider(telegram_id: int, provider: str):
@@ -93,18 +127,66 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
     query = update.callback_query
     if not query: return False
 
-    # [Dev-Ассистент]: НОВЫЙ БЛОК. Добавляем обработчик для нашей кнопки отмены.
-    # [Dev-Ассистент]: Он должен стоять до основной логики, чтобы перехватывать этот callback.
-    if query.data == "image_gen_cancel":
-        # 1. Самое главное - "снимаем шляпу фотографа", сбрасывая состояние.
-        context.user_data['state'] = STATE_NONE
-        # 2. Сообщаем пользователю, что все отменено.
-        await query.answer("Операция отменена")
-        # 3. Возвращаем пользователя в меню выбора действий с изображением, чтобы он мог начать заново или уйти.
-        await show_image_ai_selection_menu(update, context)
-        return True # Сообщаем, что callback обработан.
+    # [Dev-Ассистент]: НОВЫЙ БЛОК ДЛЯ ОБРАБОТКИ КНОПОК ПОД ИЗОБРАЖЕНИЕМ
+    if query.data == "image_create_new":
+        await query.answer()
+        # [Dev-Ассистент]: Просто вызываем уже существующую функцию, которая запрашивает промпт.
+        await prompt_for_image_text(update, context)
+        return True
 
-    # --- Маршрутизация по главным меню ---
+    if query.data == "image_redraw":
+        await query.answer("Перерисовываю...")
+        
+        prompt_text = context.user_data.get(LAST_IMAGE_PROMPT_KEY)
+        if not prompt_text:
+            await query.message.reply_text("😔 Не удалось найти последний запрос для перерисовки. Пожалуйста, создайте новое изображение.")
+            return True
+
+        # [Dev-Ассистент]: Этот блок повторяет логику из main.py, но для callback'а
+        await query.message.reply_text(f"🎨 Повторяю запрос в YandexArt:\n\n`{prompt_text}`", parse_mode='Markdown')
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+        
+        try:
+            yandex_client = YandexArtClient(
+                folder_id=os.getenv("YANDEX_FOLDER_ID"),
+                api_key=os.getenv("YANDEX_API_KEY")
+            )
+            image_bytes, error_message = await yandex_client.generate_image(prompt_text)
+
+            if error_message:
+                await query.message.reply_text(f"😔 Ошибка при перерисовке: {error_message}")
+            elif image_bytes:
+                keyboard = [
+                    [
+                        InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw"),
+                        InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await query.message.reply_photo(
+                    photo=image_bytes, 
+                    caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", 
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+        except Exception as e:
+            # [Dev-Ассистент]: Теперь эта строка будет работать, т.к. logging импортирован
+            logging.error(f"Критическая ошибка при перерисовке YandexArt: {e}", exc_info=True)
+            await query.message.reply_text(f"Произошла критическая ошибка: {e}")
+
+        return True
+
+    # --- Старая логика ---
+    if query.data == "image_gen_cancel":
+        context.user_data['state'] = STATE_NONE
+        await query.answer("Операция отменена")
+        await show_image_ai_selection_menu(update, context)
+        return True 
+
+    # ... остальная часть функции без изменений ...
     if query.data == "select_mode_text":
         await query.answer()
         await show_text_ai_selection_menu(update, context)
@@ -120,7 +202,6 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
         await show_ai_mode_selection_hub(update, context)
         return True
     
-    # --- Маршрутизация по меню работы с изображениями ---
     if query.data == "image_gen_create":
         await query.answer()
         await show_image_generation_ai_selection_menu(update, context)
@@ -145,7 +226,6 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
         await prompt_for_image_text(update, context)
         return True
 
-    # --- Обработка выбора конкретной ТЕКСТОВОЙ модели ---
     if query.data.startswith("select_ai_"):
         user_data = await db.get_user_by_telegram_id(update.effective_user.id)
         if not user_data or user_data.get('subscription_tier') != TIER_PRO:

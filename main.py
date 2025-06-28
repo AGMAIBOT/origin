@@ -39,7 +39,8 @@ import config
 from constants import (
     STATE_NONE, STATE_WAITING_FOR_IMAGE_PROMPT, TIER_LITE, TIER_PRO, 
     TIER_FREE, GPT_4_OMNI, CURRENT_IMAGE_GEN_PROVIDER_KEY, 
-    IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, GEMINI_STANDARD
+    IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, GEMINI_STANDARD, 
+    LAST_IMAGE_PROMPT_KEY
 )
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler, onboarding_handler
@@ -159,10 +160,8 @@ async def show_wip_notice(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 @require_verification
 @inject_user_data
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
-    # [Dev-Ассистент]: Вся логика ниже была переработана для надежности.
     current_state = context.user_data.get('state', STATE_NONE)
 
-    # --- Обработка режима генерации изображений ---
     if current_state == STATE_WAITING_FOR_IMAGE_PROMPT:
         prompt_text = update.message.text
         if not prompt_text:
@@ -170,33 +169,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
             return
 
         image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
+        
+        # [Dev-Ассистент]: ИЗМЕНЕНИЕ №1 - Сохраняем последний промпт в context.
+        # [Dev-Ассистент]: Это нужно, чтобы кнопка "Перерисовать" знала, что именно перерисовывать.
+        context.user_data[LAST_IMAGE_PROMPT_KEY] = prompt_text
 
-        # --- Логика для DALL-E 3 ---
+        # --- Логика для DALL-E 3 (ОСТАЕТСЯ БЕЗ ИЗМЕНЕНИЙ, КАК И ПРОСИЛИ) ---
         if image_gen_provider == IMAGE_GEN_DALL_E_3:
-            # [Dev-Ассистент]: 1. Немедленно отвечаем пользователю и ставим статус.
             await update.message.reply_text("🎨 Принято! Начинаю рисовать через DALL-E 3, это может занять до минуты...")
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
-
             try:
-                # [Dev-Ассистент]: 2. Выполняем основную работу в блоке try.
                 caps = get_ai_client_with_caps(GPT_4_OMNI, system_instruction="You are an image generation assistant.")
                 image_url, error_message = await caps.client.generate_image(prompt_text)
-
                 if error_message:
                     await update.message.reply_text(f"😔 Ошибка: {error_message}")
-                    # [Dev-Ассистент]: При ошибке НЕ сбрасываем состояние, чтобы пользователь мог попробовать снова.
                 elif image_url:
                     await update.message.reply_photo(photo=image_url, caption=f"✨ Ваше изображение по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
-                    # [Dev-Ассистент]: 3. Сбрасываем состояние ТОЛЬКО после успешного выполнения.
                     context.user_data['state'] = STATE_NONE
                 else:
                     await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
-
             except Exception as e:
                 logger.error(f"Критическая ошибка в блоке генерации DALL-E 3: {e}", exc_info=True)
                 await update.message.reply_text(f"Произошла критическая ошибка: {e}")
 
-        # --- Логика для YandexArt ---
+        # --- Логика для YandexArt (ЗДЕСЬ БУДУТ ИЗМЕНЕНИЯ) ---
         elif image_gen_provider == IMAGE_GEN_YANDEXART:
             if len(prompt_text) > config.YANDEXART_PROMPT_LIMIT:
                 cancel_button = InlineKeyboardButton("❌ Отмена", callback_data="image_gen_cancel")
@@ -209,12 +205,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                 )
                 return
 
-            # [Dev-Ассистент]: 1. Немедленно отвечаем пользователю и ставим статус.
             await update.message.reply_text("🎨 Принято! Отправляю запрос в YandexArt, это может занять до 2 минут...")
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
             
             try:
-                # [Dev-Ассистент]: 2. Выполняем основную работу в блоке try.
                 yandex_client = YandexArtClient(
                     folder_id=os.getenv("YANDEX_FOLDER_ID"),
                     api_key=os.getenv("YANDEX_API_KEY")
@@ -223,23 +217,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
 
                 if error_message:
                     await update.message.reply_text(f"😔 Ошибка: {error_message}")
-                    # [Dev-Ассистент]: При ошибке НЕ сбрасываем состояние.
                 elif image_bytes:
-                    await update.message.reply_photo(photo=image_bytes, caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
-                    # [Dev-Ассистент]: 3. Сбрасываем состояние ТОЛЬКО после успешного выполнения.
+                    # [Dev-Ассистент]: ИЗМЕНЕНИЕ №2 - Создаем и прикрепляем новую клавиатуру.
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw"),
+                            InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    await update.message.reply_photo(
+                        photo=image_bytes, 
+                        caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", 
+                        parse_mode='Markdown',
+                        reply_markup=reply_markup # <<< [Dev-Ассистент]: Вот она!
+                    )
+                    
                     context.user_data['state'] = STATE_NONE
                 else:
                     await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
-
             except Exception as e:
                 logger.error(f"Критическая ошибка в блоке генерации YandexArt: {e}", exc_info=True)
                 await update.message.reply_text(f"Произошла критическая ошибка: {e}")
-
         else:
             await update.message.reply_text("Произошла ошибка: не выбран AI для генерации. Пожалуйста, начните сначала из меню.")
-            context.user_data['state'] = STATE_NONE # [Dev-Ассистент]: Сбрасываем состояние при неизвестной ошибке.
+            context.user_data['state'] = STATE_NONE
         
-        # [Dev-Ассистент]: Важно! Этот return гарантирует, что остальной код handle_message не будет выполнен.
         return
     
 

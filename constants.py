@@ -18,7 +18,7 @@ TEMP_CHAR_ID = "temp_char_id"
 TEMP_CHAR_NAME = "temp_char_name"
 TEMP_CHAR_PROMPT = "temp_char_prompt"
 CURRENT_IMAGE_GEN_PROVIDER_KEY = "current_image_gen_provider"
-
+LAST_IMAGE_PROMPT_KEY = "last_image_prompt"
 # Ключи для пагинации
 CURRENT_CHAR_VIEW_PAGE_KEY = "current_character_view_page"
 CURRENT_CHAR_MANAGE_PAGE_KEY = "current_character_manage_page"

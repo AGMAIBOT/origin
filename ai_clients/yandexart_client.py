@@ -48,15 +48,11 @@ class YandexArtClient:
                 # --- ЭТАП 1: ЗАПУСК ГЕНЕРАЦИИ ---
                 logger.info("Отправка запроса на генерацию в YandexArt (метод Api-Key)...")
                 async with session.post(IMAGE_API_URL, headers=headers, json=payload) as resp:
-                    # [Dev-Ассистент]: КЛЮЧЕВОЕ ИЗМЕНЕНИЕ!
-                    # Вместо resp.raise_for_status(), мы вручную проверяем статус.
-                    # Это позволяет нам безопасно прочитать тело ошибки, если она есть.
                     if resp.status != 200:
                         error_body = await resp.text()
                         logger.error(
                             f"Ошибка при запуске генерации YandexArt ({resp.status}): {error_body}"
                         )
-                        # [Dev-Ассистент]: Возвращаем пользователю осмысленную ошибку
                         return None, f"Ошибка от Yandex ({resp.status}): {error_body}"
 
                     operation_data = await resp.json()
@@ -68,15 +64,23 @@ class YandexArtClient:
                 logger.info(f"Начало опроса операции: {operation_id}")
                 operation_url = OPERATION_API_URL_TEMPLATE.format(operation_id)
 
-                for _ in range(60):
-                    await asyncio.sleep(2)
+                # [Dev-Ассистент]: КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ!
+                # [Dev-Ассистент]: Увеличиваем начальную задержку с 2 до 7 секунд.
+                # [Dev-Ассистент]: Это даст системам Яндекса время для синхронизации
+                # [Dev-Ассистент]: и предотвратит ошибку "Operation doesn't exist".
+                await asyncio.sleep(7)
+
+                # [Dev-Ассистент]: Цикл опроса теперь будет начинаться, когда операция уже точно существует.
+                for _ in range(60): # Оставляем цикл на ~2 минуты
                     async with session.get(operation_url, headers=headers) as op_resp:
-                        # [Dev-Ассистент]: Здесь применяем ту же логику безопасной проверки
                         if op_resp.status != 200:
                             error_body = await op_resp.text()
                             logger.error(
                                 f"Ошибка при проверке статуса операции YandexArt ({op_resp.status}): {error_body}"
                             )
+                            # [Dev-Ассистент]: Если мы все же получаем 404, сообщаем об этом.
+                            if op_resp.status == 404:
+                                return None, f"Ошибка от Yandex (404): Операция не найдена. Возможно, она была удалена или еще не создана."
                             return None, f"Ошибка от Yandex ({op_resp.status}): {error_body}"
                         
                         op_data = await op_resp.json()
@@ -93,10 +97,13 @@ class YandexArtClient:
 
                             image_bytes = base64.b64decode(image_base64)
                             return image_bytes, None
+                    
+                    # [Dev-Ассистент]: Пауза между попытками опроса остается 2 секунды.
+                    await asyncio.sleep(2)
+
 
                 return None, "Время ожидания генерации истекло."
 
-        # [Dev-Ассистент]: Теперь этот блок ловит только ошибки соединения, а не ошибки API
         except aiohttp.ClientConnectorError as e:
             logger.error(f"Ошибка соединения с YandexArt: {e}")
             return None, f"Не удалось подключиться к серверам Yandex. Ошибка: {e}"
