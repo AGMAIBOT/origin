@@ -12,6 +12,7 @@ from constants import (
     LAST_IMAGE_PROMPT_KEY
 )
 from ai_clients.yandexart_client import YandexArtClient
+from ai_clients.factory import get_ai_client_with_caps
 from telegram.constants import ChatAction
 import os
 import logging
@@ -127,13 +128,12 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
     query = update.callback_query
     if not query: return False
 
-    # [Dev-Ассистент]: НОВЫЙ БЛОК ДЛЯ ОБРАБОТКИ КНОПОК ПОД ИЗОБРАЖЕНИЕМ
     if query.data == "image_create_new":
         await query.answer()
-        # [Dev-Ассистент]: Просто вызываем уже существующую функцию, которая запрашивает промпт.
         await prompt_for_image_text(update, context)
         return True
 
+    # [Dev-Ассистент]: НАЧАЛО БОЛЬШИХ ИЗМЕНЕНИЙ В БЛОКЕ "ПЕРЕРИСОВАТЬ"
     if query.data == "image_redraw":
         await query.answer("Перерисовываю...")
         
@@ -142,40 +142,55 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
             await query.message.reply_text("😔 Не удалось найти последний запрос для перерисовки. Пожалуйста, создайте новое изображение.")
             return True
 
-        # [Dev-Ассистент]: Этот блок повторяет логику из main.py, но для callback'а
-        await query.message.reply_text(f"🎨 Повторяю запрос в YandexArt:\n\n`{prompt_text}`", parse_mode='Markdown')
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+        # [Dev-Ассистент]: 1. Определяем, какой генератор был использован последним.
+        image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
         
-        try:
-            yandex_client = YandexArtClient(
-                folder_id=os.getenv("YANDEX_FOLDER_ID"),
-                api_key=os.getenv("YANDEX_API_KEY")
-            )
-            image_bytes, error_message = await yandex_client.generate_image(prompt_text)
+        # [Dev-Ассистент]: 2. Создаем универсальную клавиатуру.
+        reply_keyboard = [
+            [
+                InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw"),
+                InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(reply_keyboard)
 
-            if error_message:
-                await query.message.reply_text(f"😔 Ошибка при перерисовке: {error_message}")
-            elif image_bytes:
-                keyboard = [
-                    [
-                        InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw"),
-                        InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")
-                    ]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
+        # [Dev-Ассистент]: 3. В зависимости от провайдера, выполняем нужную логику.
+        # --- Маршрут для YandexArt ---
+        if image_gen_provider == IMAGE_GEN_YANDEXART:
+            await query.message.reply_text(f"🎨 Повторяю запрос в YandexArt:\n\n`{prompt_text}`", parse_mode='Markdown')
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+            try:
+                yandex_client = YandexArtClient(folder_id=os.getenv("YANDEX_FOLDER_ID"), api_key=os.getenv("YANDEX_API_KEY"))
+                image_bytes, error_message = await yandex_client.generate_image(prompt_text)
+                if error_message:
+                    await query.message.reply_text(f"😔 Ошибка при перерисовке: {error_message}")
+                elif image_bytes:
+                    await query.message.reply_photo(photo=image_bytes, caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", parse_mode='Markdown', reply_markup=reply_markup)
+                else:
+                    await query.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+            except Exception as e:
+                logging.error(f"Критическая ошибка при перерисовке YandexArt: {e}", exc_info=True)
+                await query.message.reply_text(f"Произошла критическая ошибка: {e}")
 
-                await query.message.reply_photo(
-                    photo=image_bytes, 
-                    caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", 
-                    parse_mode='Markdown',
-                    reply_markup=reply_markup
-                )
-            else:
-                await query.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
-        except Exception as e:
-            # [Dev-Ассистент]: Теперь эта строка будет работать, т.к. logging импортирован
-            logging.error(f"Критическая ошибка при перерисовке YandexArt: {e}", exc_info=True)
-            await query.message.reply_text(f"Произошла критическая ошибка: {e}")
+        # --- Маршрут для DALL-E 3 (GPT) ---
+        elif image_gen_provider == IMAGE_GEN_DALL_E_3:
+            await query.message.reply_text(f"🎨 Повторяю запрос в DALL-E 3:\n\n`{prompt_text}`", parse_mode='Markdown')
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+            try:
+                caps = get_ai_client_with_caps(GPT_4_OMNI, system_instruction="You are an image generation assistant.")
+                image_url, error_message = await caps.client.generate_image(prompt_text)
+                if error_message:
+                    await query.message.reply_text(f"😔 Ошибка при перерисовке: {error_message}")
+                elif image_url:
+                    await query.message.reply_photo(photo=image_url, caption=f"✨ Ваше изображение по запросу:\n\n`{prompt_text}`", parse_mode='Markdown', reply_markup=reply_markup)
+                else:
+                    await query.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+            except Exception as e:
+                logging.error(f"Критическая ошибка при перерисовке DALL-E 3: {e}", exc_info=True)
+                await query.message.reply_text(f"Произошла критическая ошибка: {e}")
+        
+        else:
+            await query.message.reply_text("😔 Ошибка: не удалось определить, какой генератор использовать для перерисовки.")
 
         return True
 

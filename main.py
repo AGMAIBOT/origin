@@ -169,22 +169,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
             return
 
         image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
-        
-        # [Dev-Ассистент]: ИЗМЕНЕНИЕ №1 - Сохраняем последний промпт в context.
-        # [Dev-Ассистент]: Это нужно, чтобы кнопка "Перерисовать" знала, что именно перерисовывать.
         context.user_data[LAST_IMAGE_PROMPT_KEY] = prompt_text
 
-        # --- Логика для DALL-E 3 (ОСТАЕТСЯ БЕЗ ИЗМЕНЕНИЙ, КАК И ПРОСИЛИ) ---
+        # --- Логика для DALL-E 3 (ЗДЕСЬ БУДУТ ИЗМЕНЕНИЯ) ---
         if image_gen_provider == IMAGE_GEN_DALL_E_3:
             await update.message.reply_text("🎨 Принято! Начинаю рисовать через DALL-E 3, это может занять до минуты...")
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
             try:
                 caps = get_ai_client_with_caps(GPT_4_OMNI, system_instruction="You are an image generation assistant.")
                 image_url, error_message = await caps.client.generate_image(prompt_text)
+
                 if error_message:
                     await update.message.reply_text(f"😔 Ошибка: {error_message}")
                 elif image_url:
-                    await update.message.reply_photo(photo=image_url, caption=f"✨ Ваше изображение по запросу:\n\n`{prompt_text}`", parse_mode='Markdown')
+                    # [Dev-Ассистент]: НАЧАЛО ИЗМЕНЕНИЯ.
+                    # [Dev-Ассистент]: Создаем и прикрепляем ту же самую клавиатуру, что и для YandexArt.
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw"),
+                            InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    await update.message.reply_photo(
+                        photo=image_url, 
+                        caption=f"✨ Ваше изображение по запросу:\n\n`{prompt_text}`", 
+                        parse_mode='Markdown',
+                        reply_markup=reply_markup # <<< [Dev-Ассистент]: Прикрепляем клавиатуру
+                    )
+                    # [Dev-Ассистент]: КОНЕЦ ИЗМЕНЕНИЯ.
                     context.user_data['state'] = STATE_NONE
                 else:
                     await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
@@ -192,8 +206,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                 logger.error(f"Критическая ошибка в блоке генерации DALL-E 3: {e}", exc_info=True)
                 await update.message.reply_text(f"Произошла критическая ошибка: {e}")
 
-        # --- Логика для YandexArt (ЗДЕСЬ БУДУТ ИЗМЕНЕНИЯ) ---
+        # --- Логика для YandexArt (Остается без изменений) ---
         elif image_gen_provider == IMAGE_GEN_YANDEXART:
+            # ... код для YandexArt остается без изменений
             if len(prompt_text) > config.YANDEXART_PROMPT_LIMIT:
                 cancel_button = InlineKeyboardButton("❌ Отмена", callback_data="image_gen_cancel")
                 reply_markup = InlineKeyboardMarkup([[cancel_button]])
@@ -218,7 +233,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                 if error_message:
                     await update.message.reply_text(f"😔 Ошибка: {error_message}")
                 elif image_bytes:
-                    # [Dev-Ассистент]: ИЗМЕНЕНИЕ №2 - Создаем и прикрепляем новую клавиатуру.
                     keyboard = [
                         [
                             InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw"),
@@ -231,7 +245,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                         photo=image_bytes, 
                         caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", 
                         parse_mode='Markdown',
-                        reply_markup=reply_markup # <<< [Dev-Ассистент]: Вот она!
+                        reply_markup=reply_markup
                     )
                     
                     context.user_data['state'] = STATE_NONE
