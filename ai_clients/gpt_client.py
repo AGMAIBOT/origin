@@ -52,6 +52,7 @@ class GPTClient(BaseAIClient):
 
     async def get_image_response(self, chat_history: List[Dict], text_prompt: str, image: Image) -> Tuple[str, int]:
         logger.info(f"Запрос к GPT Vision с моделью {self._model_name}")
+        logger.info(f"Размер изображения: {image.size}, формат: {image.format}") # Добавляем логирование размера
         base64_image = _pil_to_base64(image)
         messages = prepare_openai_history(
             system_instruction_content=self._system_instruction_content,
@@ -71,7 +72,7 @@ class GPTClient(BaseAIClient):
             response = await self._client.chat.completions.create(
                 model=self._model_name,
                 messages=messages,
-                max_tokens=2048
+                max_completion_tokens=2048
             )
             response_text = response.choices[0].message.content
             tokens_spent = response.usage.total_tokens if response.usage else 0
