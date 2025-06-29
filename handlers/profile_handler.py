@@ -129,12 +129,12 @@ async def set_output_format(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     }
     new_format = format_map.get(query.data)
     
-    if new_format == OUTPUT_FORMAT_PDF:
-        await query.answer("Этот формат пока в разработке.", show_alert=True)
+    user = await db.get_user_by_telegram_id(update.effective_user.id)
+    if not user:
+        await query.answer("Произошла ошибка, ваш профиль не найден.", show_alert=True)
         return
-
-    user_id = (await db.get_user_by_telegram_id(update.effective_user.id))['id']
-    await db.set_user_output_format(user_id=user_id, output_format=new_format)
+        
+    await db.set_user_output_format(user_id=user['id'], output_format=new_format)
     await query.answer(f"Формат изменен на '{new_format}'")
     
     await show_format_selection_menu(update, context)

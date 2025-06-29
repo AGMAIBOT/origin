@@ -1,4 +1,4 @@
-# utils.py
+# utils.py (ПОЛНАЯ ВЕРСИЯ С ГЕНЕРАЦИЕЙ PDF)
 
 import logging
 from datetime import datetime 
@@ -7,18 +7,69 @@ from functools import wraps
 from telegram.ext import ContextTypes
 import config
 from io import BytesIO
+
+# [Dev-Ассистент]: Новые импорты для PDF и аудио
 from pydub import AudioSegment
+from fpdf import FPDF
+import asyncio
+
 import database as db
 from constants import TIER_FREE, OUTPUT_FORMAT_TEXT, OUTPUT_FORMAT_TXT, OUTPUT_FORMAT_PDF
 logger = logging.getLogger(__name__)
 
+
+# --- [Dev-Ассистент]: НАЧАЛО НОВОГО БЛОКА С ГЕНЕРАТОРОМ PDF ---
+
+def create_pdf_from_text(text: str) -> bytes:
+    """
+    Создает PDF-файл из текста в оперативной памяти с поддержкой кириллицы.
+    Эта функция является СИНХРОННОЙ и должна вызываться через run_in_executor.
+    
+    :param text: Текст для добавления в PDF.
+    :return: PDF-файл в виде байтов.
+    """
+    pdf = FPDF()
+    
+    # 1. Добавляем шрифт с поддержкой Unicode (для кириллицы)
+    #    Предполагается, что файл DejaVuSans.ttf лежит в папке assets
+    try:
+        # Указываем путь к шрифту относительно корня проекта
+        pdf.add_font('DejaVu', '', 'assets/DejaVuSans.ttf')
+    except RuntimeError:
+        # Эта ошибка может возникнуть, если FPDF не может найти или обработать файл шрифта
+        logger.error(
+            "Ошибка при загрузке шрифта 'assets/DejaVuSans.ttf'. "
+            "Убедитесь, что файл существует и не поврежден. "
+            "PDF будет создан без поддержки кириллицы."
+        )
+        # В качестве запасного варианта, используем стандартный шрифт
+        pdf.set_font('Arial', size=12)
+    else:
+        # 2. Устанавливаем добавленный шрифт, только если он успешно загрузился
+        pdf.set_font('DejaVu', size=7)
+    
+    # 3. Добавляем страницу
+    pdf.add_page()
+    
+    # 4. Используем multi_cell для автоматического переноса текста
+    #    w=0 означает, что ячейка будет занимать всю ширину от левого до правого поля.
+    #    h=10 - высота строки
+    pdf.multi_cell(w=0, h=5, text=text)
+    
+    # 5. Возвращаем результат в виде байтов
+    return pdf.output()
+
+# --- [Dev-Ассистент]: КОНЕЦ НОВОГО БЛОКА ---
+
+
 def get_main_keyboard() -> ReplyKeyboardMarkup:
+    """Возвращает основную клавиатуру с кнопками меню."""
     keyboard = [
         [KeyboardButton("Персонажи"), KeyboardButton("Выбор AI")],
-        # [Dev-Ассистент]: Добавляем иконку к кнопке Профиль.
         [KeyboardButton("⚙️ Профиль"), KeyboardButton("🤖 AGM, научи меня!")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
 
 async def delete_message_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Удаляет сообщение по расписанию. Получает chat_id и message_id из job.data."""
@@ -29,15 +80,16 @@ async def delete_message_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.warning(f"Не удалось удалить сообщение {job_data['message_id']} в чате {job_data['chat_id']}: {e}")
 
+
 async def send_long_message(
     update: Update, 
     context: ContextTypes.DEFAULT_TYPE,
     text: str, 
     reply_markup: InlineKeyboardMarkup = None,
-    output_format: str = OUTPUT_FORMAT_TEXT # [Dev-Ассистент]: Новый параметр!
+    output_format: str = OUTPUT_FORMAT_TEXT
 ):
     """
-    Отправляет ответ пользователю в заданном формате (текст или файл).
+    Отправляет ответ пользователю в заданном формате (текст, txt или PDF).
     """
     message_to_interact = update.message or (update.callback_query and update.callback_query.message)
     chat_id = message_to_interact.chat_id
@@ -60,7 +112,6 @@ async def send_long_message(
         try:
             text_bytes = text.encode('utf-8')
             text_file = BytesIO(text_bytes)
-            # Отправляем файл как документ
             await context.bot.send_document(
                 chat_id=chat_id,
                 document=text_file,
@@ -72,15 +123,37 @@ async def send_long_message(
             await context.bot.send_message(chat_id=chat_id, text="Не удалось сформировать .txt файл. Вот ответ текстом:")
             await send_long_message(update, context, text, reply_markup, OUTPUT_FORMAT_TEXT)
 
-    # Сценарий 3: Заглушка для PDF
+    # --- [Dev-Ассистент]: НАЧАЛО ИЗМЕНЕНИЙ В БЛОКЕ PDF ---
+    # Сценарий 3: Отправка файлом .pdf
     elif output_format == OUTPUT_FORMAT_PDF:
-        await context.bot.send_message(chat_id=chat_id, text="Режим вывода в PDF пока не реализован. Вот ответ текстом:")
-        await send_long_message(update, context, text, reply_markup, OUTPUT_FORMAT_TEXT)
+        try:
+            # Запускаем синхронную ресурсоемкую задачу в отдельном потоке,
+            # чтобы не блокировать бота.
+            loop = asyncio.get_running_loop()
+            pdf_bytes = await loop.run_in_executor(None, create_pdf_from_text, text)
             
+            pdf_file = BytesIO(pdf_bytes)
+            # [Dev-Ассистент]: Важно! Telegram требует, чтобы у файлового объекта в памяти было имя.
+            pdf_file.name = "response.pdf" 
+            
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=pdf_file,
+                filename="response.pdf", # Имя файла, которое увидит пользователь
+                caption="Ваш ответ в формате .pdf"
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при создании .pdf файла: {e}", exc_info=True)
+            await context.bot.send_message(chat_id=chat_id, text="Не удалось сформировать .pdf файл. Вот ответ текстом:")
+            # В случае ошибки - отправляем обычным текстом
+            await send_long_message(update, context, text, reply_markup, OUTPUT_FORMAT_TEXT)
+    # --- [Dev-Ассистент]: КОНЕЦ ИЗМЕНЕНИЙ В БЛОКЕ PDF ---
+            
+
 async def get_actual_user_tier(user_data: dict) -> str:
     """
     Централизованно проверяет срок действия подписки, при необходимости обновляет
-    ее в БД и возвращает актуальный тариф. Это единый источник истины.
+    ее в БД и возвращает актуальный тариф.
     """
     current_tier = user_data.get('subscription_tier', TIER_FREE)
     expiry_date_str = user_data.get('subscription_expiry_date')
@@ -92,10 +165,10 @@ async def get_actual_user_tier(user_data: dict) -> str:
             return TIER_FREE
     return current_tier
 
+
 def require_verification(func):
     """
     Декоратор, который проверяет, верифицирован ли пользователь.
-    [Dev-Ассистент]: ИСПРАВЛЕННАЯ ВЕРСИЯ - всегда проверяет актуальные данные из БД.
     """
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
@@ -107,20 +180,16 @@ def require_verification(func):
         if user_data and user_data.get('is_verified'):
             return await func(update, context, *args, **kwargs)
         else:
-            # [Dev-Ассистент]: Если пользователь не найден или не верифицирован, отправляем его на капчу.
-            # [Dev-Ассистент]: Важно! Мы используем send_message, чтобы не пытаться редактировать
-            # [Dev-Ассистент]: несуществующее сообщение, если пользователь нажал на кнопку.
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="Для доступа к функциям бота, пожалуйста, пройдите проверку.\nНажмите /start"
             )
-            # [Dev-Ассистент]: Если это был callback (нажатие на inline-кнопку),
-            # [Dev-Ассистент]: отвечаем на него, чтобы убрать "часики" на кнопке.
             if update.callback_query:
                 await update.callback_query.answer()
-            return # [Dev-Ассистент]: Важно! Прекращаем выполнение дальнейшего кода.
+            return
             
     return wrapper
+
 
 def inject_user_data(func):
     """
@@ -145,9 +214,11 @@ def inject_user_data(func):
         return await func(update, context, user_data=user_data, *args, **kwargs)
     return wrapper
 
+
 class FileSizeError(Exception):
     """Кастомное исключение для слишком больших файлов."""
     pass
+
 
 async def get_text_content_from_document(document_file, context: ContextTypes.DEFAULT_TYPE) -> str:
     """
@@ -167,24 +238,13 @@ async def get_text_content_from_document(document_file, context: ContextTypes.DE
         raise FileSizeError(f"Файл слишком большой ({len(text_content)} символов). Максимум: {config.ABSOLUTE_MAX_FILE_CHARS}.")
     return text_content
 
-# [Dev-Ассистент]: НОВАЯ ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ АУДИО
+
 def convert_oga_to_mp3_in_memory(oga_bytearray: bytearray) -> bytes:
     """
     Конвертирует аудио из формата OGG/Opus (от Telegram) в MP3 в оперативной памяти.
-    :param oga_bytearray: Аудиофайл в виде байтового массива.
-    :return: Аудиофайл в формате MP3 в виде байтов.
     """
-    # Создаем файловый объект в памяти из байтового массива
     oga_audio_stream = BytesIO(oga_bytearray)
-    
-    # Загружаем аудио из потока с помощью pydub
     audio = AudioSegment.from_file(oga_audio_stream, format="ogg")
-    
-    # Создаем буфер в памяти для сохранения MP3
     mp3_buffer = BytesIO()
-    
-    # Экспортируем аудио в MP3 в этот буфер
     audio.export(mp3_buffer, format="mp3")
-    
-    # Возвращаем содержимое буфера в виде байтов
     return mp3_buffer.getvalue()
