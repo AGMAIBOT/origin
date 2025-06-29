@@ -15,7 +15,6 @@ import database as db
 
 logger = logging.getLogger(__name__)
 
-
 @require_verification
 async def show_profile_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = await db.add_or_update_user(telegram_id=update.effective_user.id, full_name=update.effective_user.full_name, username=update.effective_user.username)
@@ -76,7 +75,6 @@ async def show_profile_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
-
 async def show_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -111,7 +109,7 @@ async def show_format_selection_menu(update: Update, context: ContextTypes.DEFAU
             callback_data=FORMAT_SET_TXT
         )],
         [InlineKeyboardButton(
-            ("✅ " if current_format == OUTPUT_FORMAT_PDF else "") + "Файл .pdf (в разработке)", 
+            ("✅ " if current_format == OUTPUT_FORMAT_PDF else "") + "Файл .pdf", 
             callback_data=FORMAT_SET_PDF
         )],
         [InlineKeyboardButton("⬅️ Назад в настройки", callback_data=SETTINGS_BACK_TO_PROFILE_HUB)]
@@ -138,7 +136,6 @@ async def set_output_format(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.answer(f"Формат изменен на '{new_format}'")
     
     await show_format_selection_menu(update, context)
-
 
 async def handle_profile_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     query = update.callback_query

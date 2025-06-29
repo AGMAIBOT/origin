@@ -183,7 +183,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 reply_markup=final_reply_markup, 
                 output_format=output_format
             )
-            
+
 # ... (команды start, reset, set_subscription, show_wip_notice остаются без изменений) ...
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
