@@ -46,7 +46,6 @@ async def show_text_ai_selection_menu(update: Update, context: ContextTypes.DEFA
     keyboard = [
         [InlineKeyboardButton(("✅ " if current_provider == GPT_O4_MINI else "") + "GPT-o4-mini (умный, vision)", callback_data=f"select_ai_{GPT_O4_MINI}")],
         [InlineKeyboardButton(("✅ " if current_provider == GPT_4_OMNI else "") + "GPT-4.1-nano (быстрый, vision)", callback_data=f"select_ai_{GPT_4_OMNI}")],
-        [InlineKeyboardButton(("✅ " if current_provider == GEMINI_STANDARD else "") + "Gemini 1.5 Flash (креативный, vision)", callback_data=f"select_ai_{GEMINI_STANDARD}")],
         [InlineKeyboardButton(("✅ " if current_provider == OPENROUTER_DEEPSEEK else "") + "DeepSeek (free OR)", callback_data=f"select_ai_{OPENROUTER_DEEPSEEK}")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_ai_mode_hub")]
     ]

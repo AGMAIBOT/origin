@@ -19,8 +19,8 @@ GPT_4O_MINI_MODEL = "o4-mini-2025-04-16"
 SUBSCRIPTION_TIERS = {
     'free': {
         "name": "Бесплатный",
-        "daily_limit": 30,
-        "ai_provider": GEMINI_STANDARD, 
+        "daily_limit": 40,
+        "ai_provider": GPT_4_OMNI,
         "can_use_vision": True,
     },
     'lite': {

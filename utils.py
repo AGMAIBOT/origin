@@ -1,4 +1,4 @@
-# utils.py (ВЕРСИЯ С "УМНЫМ" PDF-РЕНДЕРОМ И ФОРМАТИРОВАНИЕМ)
+# utils.py (ФИНАЛЬНАЯ ВЕРСИЯ - 29.06.2025)
 
 import logging
 import re
@@ -17,98 +17,98 @@ import database as db
 from constants import TIER_FREE, OUTPUT_FORMAT_TEXT, OUTPUT_FORMAT_TXT, OUTPUT_FORMAT_PDF
 logger = logging.getLogger(__name__)
 
-"""
-Краткая шпаргалка по настройке:
-Основной размер шрифта:
-Где: В методе __init__.
-Строка: self.set_font('DejaVu', '', 11)
-Что менять: Число 11. Попробуй 10 для более мелкого или 12 для более крупного текста.
-Отступ слева для списков:
-Где: В методе write_html, в блоке if stripped_line.startswith('- ').
-Строка: self.set_x(15)
-Что менять: Число 15. Увеличь его, чтобы список сдвинулся правее, уменьши — чтобы сдвинулся левее.
-Вертикальные отступы у заголовков:
-Где: В методе write_html, в блоке elif stripped_line.endswith(':').
-Строки: self.ln(3) (две строки).
-Что менять: Число 3. Это "воздух" до и после заголовка. Увеличь его, чтобы отделить заголовок от остального текста сильнее.
-Отступ слева для обычных параграфов:
-Где: В методе write_html, в самом последнем блоке else.
-Строка: self.set_x(10)
-Что менять: Число 10. Это базовый левый отступ для всего текста, который не является элементом списка.
-"""
 
-# --- [Dev-Ассистент]: НАЧАЛО БЛОКА ОБРАБОТКИ ТЕКСТА ---
+# --- БЛОК ОБРАБОТКИ ТЕКСТА ---
 
 def markdown_to_html(text: str) -> str:
     """Конвертирует Markdown в поддерживаемый Telegram HTML."""
+    # Экранируем спецсимволы, чтобы избежать инъекций
     processed_text = html.escape(text)
 
+    # Порядок важен: от более специфичных маркеров к менее.
+    # Сначала многострочный код, чтобы его содержимое не обрабатывалось дальше
     processed_text = re.sub(r'```(.*?)```', r'<pre>\1</pre>', processed_text, flags=re.DOTALL)
+    
+    # Заголовки (все уровни превращаются в жирный текст)
+    processed_text = re.sub(r'^\s*### (.*?)\s*$', r'<b>\1</b>', processed_text, flags=re.MULTILINE)
+    processed_text = re.sub(r'^\s*## (.*?)\s*$', r'<b>\1</b>', processed_text, flags=re.MULTILINE)
+    processed_text = re.sub(r'^\s*# (.*?)\s*$', r'<b>\1</b>', processed_text, flags=re.MULTILINE)
+    
+    # Жирный и курсив
     processed_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', processed_text)
     processed_text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', processed_text)
-    processed_text = re.sub(r'`(.*?)`', r'<code>\1</code>', processed_text)
-    processed_text = re.sub(r'^\s*### (.*?)\s*$', r'<b>\1</b>', processed_text, flags=re.MULTILINE)
     
-    # [Dev-Ассистент]: КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ №1.
-    # [Dev-Ассистент]: "Раз-экранируем" основные сущности обратно.
-    # [Dev-Ассистент]: Это вернет нам нормальные кавычки, но оставит < и > безопасными.
+    # Однострочный код
+    processed_text = re.sub(r'`(.*?)`', r'<code>\1</code>', processed_text)
+    
+    # "Раз-экранируем" основные сущности обратно (кавычки, амперсанды)
     processed_text = html.unescape(processed_text)
 
     return processed_text
+
 
 def strip_html_tags(text: str) -> str:
     """Удаляет HTML-теги из текста для чистого вывода в TXT."""
     return re.sub('<[^<]+?>', '', text)
 
+
+# --- КЛАСС ДЛЯ "УМНОЙ" ГЕНЕРАЦИИ PDF ---
+
 class PDF(FPDF):
-    """Кастомный класс для создания PDF с поддержкой базового HTML форматирования."""
+    """
+    Кастомный класс для создания PDF с поддержкой базового HTML форматирования.
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.set_auto_page_break(True, margin=15)
         try:
+            # Регистрируем все 4 нужных нам шрифта
             self.add_font('DejaVu', '', 'assets/DejaVuSans.ttf')
             self.add_font('DejaVu', 'B', 'assets/DejaVuSans-Bold.ttf')
             self.add_font('DejaVu', 'I', 'assets/DejaVuSans-Oblique.ttf')
-            self.set_font('DejaVu', '', 8)
+            self.add_font('DejaVuMono', '', 'assets/DejaVuSansMono.ttf') # Моноширинный
+            
+            self.set_font('DejaVu', '', 11) 
         except RuntimeError as e:
-            logger.error(f"Критическая ошибка загрузки шрифтов: {e}. PDF будет создан со стандартным шрифтом.")
+            logger.error(f"КРИТИЧЕСКАЯ ОШИБКА ЗАГРУЗКИ ШРИФТОВ: {e}. Убедитесь, что все 4 файла шрифтов DejaVu лежат в папке /assets. PDF будет создан со стандартным шрифтом, возможны ошибки.")
             self.set_font('Arial', '', 11)
 
     def write_html(self, html_text: str):
         """Парсит строку с базовыми HTML тегами и форматирует вывод в PDF."""
-        # [Dev-Ассистент]: Сначала полностью очищаем текст от HTML тегов.
-        # [Dev-Ассистент]: Стили будем применять отдельно.
-        text_without_tags = strip_html_tags(html_text)
+        # Разбиваем текст на части по тегам, сохраняя сами теги как разделители
+        parts = re.split(r'(<b>|</b>|<i>|</i>|<code>|</code>|<pre>|</pre>)', html_text)
+        
+        for part in parts:
+            if not part: continue # Пропускаем пустые строки после split
 
-        # [Dev-Ассистент]: КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ №2.
-        # [Dev-Ассистент]: Улучшенная логика обработки списков и параграфов.
-        lines = text_without_tags.split('\n')
-        for line in lines:
-            stripped_line = line.strip()
-            if not stripped_line: # Пропускаем пустые строки для чистоты
-                continue
-
-            # Проверяем на маркеры списка (дефис или звездочка в начале)
-            if stripped_line.startswith('- ') or stripped_line.startswith('* '):
-                self.set_x(15) # Отступ для элемента списка
-                # Устанавливаем жирный стиль для маркера и обычный для текста
+            if part == '<b>':
                 self.set_font(style='B')
-                self.cell(5, 7, '•') # Печатаем маркер без переноса строки
+            elif part == '</b>':
                 self.set_font(style='')
-                self.multi_cell(0, 7, f" {stripped_line[2:]}") # Текст с небольшим отступом от маркера
-            # Проверяем на заголовки, которые были в Markdown как "### Текст" или "**Текст**"
-            # После конвертации они стали <b>Текст</b>, а после strip_tags() -> Текст
-            # Мы можем их опознать по отсутствию маркера списка и двоеточию в конце
-            elif stripped_line.endswith(':'):
-                self.set_font(style='B')
-                self.ln(3) # Доп. отступ перед заголовком
-                self.multi_cell(0, 7, stripped_line)
-                self.ln(3) # Доп. отступ после заголовка
+            elif part == '<i>':
+                self.set_font(style='I')
+            elif part == '</i>':
                 self.set_font(style='')
+            elif part == '<code>' or part == '<pre>':
+                self.set_font('DejaVuMono', size=10) # ИСПОЛЬЗУЕМ БЕЗОПАСНЫЙ ШРИФТ
+            elif part == '</code>' or part == '</pre>':
+                self.set_font('DejaVu', '', 11) # Возвращаем основной шрифт
             else:
-                self.set_x(10) # Стандартный отступ для параграфа
-                self.multi_cell(0, 7, stripped_line)
-                
+                # Обработка обычного текста и списков
+                clean_part = html.unescape(part)
+                lines = clean_part.split('\n')
+                for line in lines:
+                    stripped_line = line.strip()
+                    if not stripped_line: continue
+
+                    if stripped_line.startswith('- '):
+                        self.set_x(15)
+                        self.multi_cell(0, 7, f"• {stripped_line[2:]}")
+                    else:
+                        self.set_x(10)
+                        self.multi_cell(0, 7, stripped_line)
+
+
 def create_pdf_from_html(html_text: str) -> bytes:
     """Создает PDF-файл из HTML-текста, используя кастомный рендерер PDF."""
     pdf = PDF()
@@ -116,20 +116,13 @@ def create_pdf_from_html(html_text: str) -> bytes:
     pdf.write_html(html_text)
     return pdf.output()
 
-def create_pdf_from_html(html_text: str) -> bytes:
-    """
-    Создает PDF-файл из HTML-текста, используя кастомный рендерер PDF.
-    """
-    pdf = PDF()
-    pdf.add_page()
-    pdf.write_html(html_text)
-    return pdf.output()
 
-# --- [Dev-Ассистент]: КОНЕЦ НОВЫХ БЛОКОВ ---
+# --- ОСНОВНЫЕ УТИЛИТЫ ---
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [[KeyboardButton("Персонажи"), KeyboardButton("Выбор AI")], [KeyboardButton("⚙️ Профиль"), KeyboardButton("🤖 AGM, научи меня!")]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
 
 async def delete_message_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
     job_data = context.job.data
@@ -138,6 +131,7 @@ async def delete_message_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.warning(f"Не удалось удалить сообщение {job_data['message_id']} в чате {job_data['chat_id']}: {e}")
 
+
 async def send_long_message(
     update: Update, 
     context: ContextTypes.DEFAULT_TYPE,
@@ -145,16 +139,12 @@ async def send_long_message(
     reply_markup: InlineKeyboardMarkup = None,
     output_format: str = OUTPUT_FORMAT_TEXT
 ):
-    """
-    Отправляет ответ пользователю в заданном формате (HTML, txt или PDF).
-    """
+    """Отправляет ответ пользователю в заданном формате (HTML, txt или PDF)."""
     message_to_interact = update.message or (update.callback_query and update.callback_query.message)
     chat_id = message_to_interact.chat_id
 
-    # Сценарий 1: Отправка текстом в чат
     if output_format == OUTPUT_FORMAT_TEXT:
         max_length = 4096
-        # Предполагаем, что текст УЖЕ в формате HTML
         if len(text) <= max_length:
             await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode='HTML')
         else:
@@ -163,10 +153,8 @@ async def send_long_message(
                 current_reply_markup = reply_markup if i == len(parts) - 1 else None
                 await context.bot.send_message(chat_id=chat_id, text=part, reply_markup=current_reply_markup, parse_mode='HTML')
 
-    # Сценарий 2: Отправка файлом .txt
     elif output_format == OUTPUT_FORMAT_TXT:
         try:
-            # Очищаем текст от HTML-тегов для чистого .txt
             clean_text = strip_html_tags(text)
             text_bytes = clean_text.encode('utf-8')
             text_file = BytesIO(text_bytes)
@@ -177,13 +165,10 @@ async def send_long_message(
             logger.error(f"Ошибка при создании .txt файла: {e}", exc_info=True)
             await context.bot.send_message(chat_id=chat_id, text="Не удалось сформировать .txt файл.")
 
-    # Сценарий 3: Отправка файлом .pdf
     elif output_format == OUTPUT_FORMAT_PDF:
         try:
             loop = asyncio.get_running_loop()
-            # Передаем HTML в наш новый "умный" генератор
             pdf_bytes = await loop.run_in_executor(None, create_pdf_from_html, text)
-            
             pdf_file = BytesIO(pdf_bytes)
             pdf_file.name = "response.pdf" 
             await context.bot.send_document(
@@ -193,7 +178,6 @@ async def send_long_message(
             logger.error(f"Ошибка при создании .pdf файла: {e}", exc_info=True)
             await context.bot.send_message(chat_id=chat_id, text="Не удалось сформировать .pdf файл.")
 
-# ... (остальные функции - get_actual_user_tier, require_verification и т.д. - без изменений) ...
 
 async def get_actual_user_tier(user_data: dict) -> str:
     current_tier = user_data.get('subscription_tier', TIER_FREE)
@@ -205,6 +189,7 @@ async def get_actual_user_tier(user_data: dict) -> str:
             await db.set_user_tier_to_free(user_data['id'])
             return TIER_FREE
     return current_tier
+
 
 def require_verification(func):
     @wraps(func)
@@ -220,6 +205,7 @@ def require_verification(func):
                 await update.callback_query.answer()
             return
     return wrapper
+
 
 def inject_user_data(func):
     @wraps(func)
@@ -237,8 +223,10 @@ def inject_user_data(func):
         return await func(update, context, user_data=user_data, *args, **kwargs)
     return wrapper
 
+
 class FileSizeError(Exception):
     pass
+
 
 async def get_text_content_from_document(document_file, context: ContextTypes.DEFAULT_TYPE) -> str:
     if document_file.mime_type != 'text/plain' and not document_file.file_name.lower().endswith('.txt'):
@@ -254,6 +242,7 @@ async def get_text_content_from_document(document_file, context: ContextTypes.DE
     if len(text_content) > config.ABSOLUTE_MAX_FILE_CHARS:
         raise FileSizeError(f"Файл слишком большой ({len(text_content)} символов). Максимум: {config.ABSOLUTE_MAX_FILE_CHARS}.")
     return text_content
+
 
 def convert_oga_to_mp3_in_memory(oga_bytearray: bytearray) -> bytes:
     oga_audio_stream = BytesIO(oga_bytearray)
