@@ -6,11 +6,13 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 import database as db
+import config
+from utils import get_actual_user_tier, get_user_ai_provider
 from constants import (
-    TIER_PRO, GEMINI_STANDARD, OPENROUTER_DEEPSEEK, GPT_4_OMNI, GPT_O4_MINI,
+    TIER_PRO, GEMINI_STANDARD, OPENROUTER_DEEPSEEK, GPT_4_1_NANO, GPT_O4_MINI,
     OPENROUTER_GEMINI_2_FLASH, STATE_WAITING_FOR_IMAGE_PROMPT, STATE_NONE,
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, CURRENT_IMAGE_GEN_PROVIDER_KEY,
-    LAST_IMAGE_PROMPT_KEY
+    LAST_IMAGE_PROMPT_KEY, TIER_PRO, TIER_LITE
 )
 from ai_clients.yandexart_client import YandexArtClient
 from ai_clients.factory import get_ai_client_with_caps
@@ -36,19 +38,39 @@ async def show_ai_mode_selection_hub(update: Update, context: ContextTypes.DEFAU
 
 async def show_text_ai_selection_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = await db.get_user_by_telegram_id(update.effective_user.id)
-    current_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
+    # [Dev-Ассистент]: Определяем текущую активную модель через нашу "умную" функцию
+    current_provider = await get_user_ai_provider(user_data)
+    # [Dev-Ассистент]: Определяем тариф пользователя
+    user_tier = await get_actual_user_tier(user_data)
+    # [Dev-Ассистент]: Получаем "связку ключей" для его тарифа
+    available_providers_for_tier = config.SUBSCRIPTION_TIERS[user_tier]['available_providers']
+    
     text = (
         "📝 <b>Выберите текстовую модель ИИ</b>\n\n"
-        "Режим \"Персонажи\" теперь работает со всеми моделями. Вы можете бесшовно переключаться между ними, сохраняя контекст диалога.\n\n"
+        "Режим \"Персонажи\" теперь работает со всеми моделями. Вы можете бесшовно переключаться между ними, сохраняя историю диалога.\n\n"
         "Ваш текущий выбор:"
     )
-    # [Dev-Ассистент]: Текст на кнопках здесь не содержит спецсимволов, поэтому их можно не экранировать.
-    keyboard = [
-        [InlineKeyboardButton(("✅ " if current_provider == GPT_O4_MINI else "") + "GPT-o4-mini (умный, vision)", callback_data=f"select_ai_{GPT_O4_MINI}")],
-        [InlineKeyboardButton(("✅ " if current_provider == GPT_4_OMNI else "") + "GPT-4.1-nano (быстрый, vision)", callback_data=f"select_ai_{GPT_4_OMNI}")],
-        [InlineKeyboardButton(("✅ " if current_provider == OPENROUTER_DEEPSEEK else "") + "DeepSeek (free OR)", callback_data=f"select_ai_{OPENROUTER_DEEPSEEK}")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_ai_mode_hub")]
-    ]
+    
+    keyboard = []
+    # [Dev-Ассистент]: Динамически строим клавиатуру на основе мастер-списка
+    for model_info in config.ALL_TEXT_MODELS_FOR_SELECTION:
+        provider_id = model_info['provider_id']
+        display_name = model_info['display_name']
+        
+        prefix = ""
+        # 1. Проверяем, активна ли эта модель сейчас
+        if provider_id == current_provider:
+            prefix = "✅ "
+        # 2. Если не активна, проверяем, доступна ли она на этом тарифе
+        elif provider_id not in available_providers_for_tier:
+            prefix = "🔒 "
+            
+        keyboard.append([
+            InlineKeyboardButton(prefix + display_name, callback_data=f"select_ai_{provider_id}")
+        ])
+
+    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="back_to_ai_mode_hub")])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
@@ -147,7 +169,7 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
             # ... (остальная логика DALL-E)
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
             try:
-                caps = get_ai_client_with_caps(GPT_4_OMNI, system_instruction="You are an image generation assistant.")
+                caps = get_ai_client_with_caps(GPT_4_1_NANO, system_instruction="You are an image generation assistant.")
                 image_url, error_message = await caps.client.generate_image(prompt_text)
                 if error_message: await query.message.reply_text(f"😔 Ошибка при перерисовке: {error_message}")
                 elif image_url: await query.message.reply_photo(photo=image_url, caption=caption_text, parse_mode='HTML', reply_markup=reply_markup)
@@ -202,24 +224,37 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
         return True
 
     if query.data.startswith("select_ai_"):
-        # ... (логика без изменений)
-        user_data = await db.get_user_by_telegram_id(update.effective_user.id)
-        if not user_data or user_data.get('subscription_tier') != TIER_PRO:
-            await query.answer("Эта функция доступна только на Pro-тарифе.", show_alert=True)
-            return True 
         new_provider = query.data.replace("select_ai_", "")
         user_id = update.effective_user.id
+        
+        # [Dev-Ассистент]: Блок с новой, гибкой проверкой доступа
+        user_data = await db.get_user_by_telegram_id(user_id)
+        user_tier = await get_actual_user_tier(user_data)
+        available_providers_for_tier = config.SUBSCRIPTION_TIERS[user_tier]['available_providers']
+
+        if new_provider not in available_providers_for_tier:
+            # [Dev-Ассистент]: Умный ответ, если нажали на "замочек"
+            await query.answer(f"🔒 Эта модель доступна на тарифах '{config.SUBSCRIPTION_TIERS[TIER_LITE]['name']}' и '{config.SUBSCRIPTION_TIERS[TIER_PRO]['name']}'.", show_alert=True)
+            return True
+
+        # [Dev-Ассистент]: Если проверка пройдена, всё как и раньше
         await set_ai_provider(user_id, new_provider)
-        provider_names = {
-            GEMINI_STANDARD: "Gemini 1.5 Flash", OPENROUTER_DEEPSEEK: "DeepSeek (OpenRouter)",
-            GPT_4_OMNI: "GPT-4.1 nano", GPT_O4_MINI: "GPT-o4-mini",
-            OPENROUTER_GEMINI_2_FLASH: "Gemini 2.0 Flash (экспериментальный)"
-        }
-        provider_name = provider_names.get(new_provider, "Неизвестная модель")
+        
+        # Получаем display_name из нашего мастер-списка
+        provider_name = "Неизвестная модель"
+        for model in config.ALL_TEXT_MODELS_FOR_SELECTION:
+            if model['provider_id'] == new_provider:
+                provider_name = model['display_name'].replace("(умный, vision)", "").replace("(быстрый, vision)", "").strip()
+                break
+        
         await query.answer(f"Выбрана модель: {provider_name}")
-        try: await show_text_ai_selection_menu(update, context)
+        try: 
+            await show_text_ai_selection_menu(update, context)
         except BadRequest as e:
-            if "Message is not modified" not in str(e): pass
+            if "Message is not modified" not in str(e): 
+                # [Dev-Ассистент]: Добавляем логгирование для редких ошибок
+                logger.warning(f"Не удалось обновить меню выбора AI: {e}")
+                pass
         return True
         
     return False

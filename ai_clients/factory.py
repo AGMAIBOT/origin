@@ -82,10 +82,10 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
         )
 
     # --- Маршрутизация к OpenAI GPT ---
-    elif provider_identifier == GPT_4_OMNI:
+    elif provider_identifier == GPT_4_1_NANO:
         if not OPENAI_API_KEY: raise ValueError("API ключ для OpenAI не найден.")
         # <<< ИСПРАВЛЕНИЕ: Убраны кавычки, теперь это ссылка на переменную из config >>>
-        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name=config.GPT_4_OMNI_MODEL)
+        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name=config.GPT_4_1_NANO_MODEL)
         return AIClientCapabilities(
             client=client,
             supports_vision=True, # <-- Меняем False на True
