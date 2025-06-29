@@ -76,8 +76,16 @@ async def _keep_typing_indicator_alive(bot: Bot, chat_id: int):
         logger.warning(f"Ошибка в задаче индикатора для чата {chat_id}: {e}")
 
 async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
+    """
+    [Dev-Ассистент]: Полностью переработанная функция с надежным потоком данных.
+    1. Получает "сырой" ответ от LLM.
+    2. Сохраняет "сырой" ответ в БД.
+    3. Обрабатывает ответ для нужного формата вывода (HTML или очистка для файлов).
+    4. Отправляет пользователю обработанный результат.
+    """
+    # --- Шаг 1: Подготовка данных ---
     user_id = user_data['id']
-    chat_id = update.effective_chat.id # [Dev-Ассистент]: Получаем chat_id для индикатора
+    chat_id = update.effective_chat.id
     char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
     ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
     output_format = user_data.get('output_format', OUTPUT_FORMAT_TEXT)
@@ -101,6 +109,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await context.bot.send_message(chat_id=chat_id, text=f"Ошибка конфигурации: {e}")
         return
     
+    # [Dev-Ассистент]: Проверки на Vision и обработку файлов (без изменений)
     if is_photo and not caps.supports_vision:
         await context.bot.send_message(chat_id=chat_id, text="К сожалению, выбранная модель AI не умеет обрабатывать изображения.")
         return
@@ -116,52 +125,65 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     chat_history = history_from_db + context.chat_data.get('history', [])
     context.chat_data.pop('history', None)
 
-    # [Dev-Ассистент]: Запускаем нашу фоновую задачу
+    # --- Запускаем "умный индикатор" ---
     indicator_task = asyncio.create_task(
         _keep_typing_indicator_alive(context.bot, chat_id)
     )
     
-    response_text = None
+    raw_response_text = None
+    processed_text_for_user = None
+    reply_markup = None
+
     try:
-        # --- Шаг 5: Основной запрос к AI и отправка ответа ---
-        # [Dev-Ассистент]: Убрали send_chat_action отсюда, т.к. теперь это делает фоновая задача.
+        # --- Шаг 5: Получение СЫРОГО ответа от LLM ---
         if is_photo and image_obj:
-            response_text, _ = await ai_client.get_image_response(chat_history, user_content, image_obj)
+            raw_response_text, _ = await ai_client.get_image_response(chat_history, user_content, image_obj)
             db_user_content = f"[Изображение] {user_content}"
         else:
-            response_text, _ = await ai_client.get_text_response(chat_history, user_content)
+            raw_response_text, _ = await ai_client.get_text_response(chat_history, user_content)
             db_user_content = user_content
             
+        # --- Шаг 6: Сохранение СЫРОГО ответа в БД ---
         await db.add_message_to_history(user_id, char_name, 'user', db_user_content)
-        await db.add_message_to_history(user_id, char_name, 'model', response_text)
+        await db.add_message_to_history(user_id, char_name, 'model', raw_response_text)
 
-        context.user_data[LAST_RESPONSE_KEY] = response_text
-        reply_markup = get_post_processing_keyboard(len(response_text))
+        # --- Шаг 7: Постобработка для пользователя ---
+        context.user_data[LAST_RESPONSE_KEY] = raw_response_text
+        reply_markup = get_post_processing_keyboard(len(raw_response_text))
         
-        # [Dev-Ассистент]: Важно! Отправляем ответ только после того, как все готово.
-        # [Dev-Ассистент]: Фоновая задача будет остановлена в блоке finally.
-        
+        # [Dev-Ассистент]: Если выводим как текст, конвертируем в HTML.
+        # [Dev-Ассистент]: Если выводим как файл (TXT/PDF), передаем "сырой" текст,
+        # [Dev-Ассистент]: а `send_long_message` сама очистит его от разметки.
+        if output_format == OUTPUT_FORMAT_TEXT:
+            processed_text_for_user = utils.markdown_to_html(raw_response_text)
+        else:
+            processed_text_for_user = raw_response_text
+
     except Exception as e:
         logger.error(f"Ошибка AI запроса для user_id={user_id}: {e}", exc_info=True)
-        # [Dev-Ассистент]: Сохраняем текст ошибки, чтобы отправить его пользователю
-        response_text = "Произошла ошибка при обращении к AI."
+        # В случае ошибки, текст будет простым, без разметки
+        processed_text_for_user = "Произошла ошибка при обращении к AI."
     
     finally:
-        # [Dev-Ассистент]: КЛЮЧЕВОЙ БЛОК!
-        # [Dev-Ассистент]: Этот код выполнится ВСЕГДА: и после успешного ответа, и после ошибки.
-        # [Dev-Ассистент]: 1. Отменяем нашу фоновую задачу.
+        # --- Гарантированная остановка индикатора ---
         indicator_task.cancel()
-        # [Dev-Ассистент]: 2. Ждем, пока она действительно завершится.
         try:
             await indicator_task
         except CancelledError:
-            pass # Это ожидаемое завершение, игнорируем.
+            pass
         
-        # [Dev-Ассистент]: 3. Только теперь, когда индикатор точно остановлен,
-        # [Dev-Ассистент]: отправляем пользователю финальное сообщение (ответ или ошибку).
-        if response_text:
-            await send_long_message(update, context, response_text, reply_markup=reply_markup if "ошибка" not in response_text else None, output_format=output_format)
-
+        # --- Шаг 8: Отправка финального результата пользователю ---
+        if processed_text_for_user:
+            # [Dev-Ассистент]: Определяем, нужно ли показывать кнопки пост-обработки
+            final_reply_markup = reply_markup if "ошибка" not in processed_text_for_user else None
+            
+            await utils.send_long_message(
+                update, context, 
+                text=processed_text_for_user,
+                reply_markup=final_reply_markup, 
+                output_format=output_format
+            )
+            
 # ... (команды start, reset, set_subscription, show_wip_notice остаются без изменений) ...
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
