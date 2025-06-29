@@ -1,22 +1,22 @@
-# handlers/character_menus.py (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+# handlers/character_menus.py (РЕФАКТОРИНГ НА HTML)
 
 import html
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
-from telegram.helpers import escape_markdown
+# [Dev-Ассистент]: escape_markdown больше не нужен
 from io import BytesIO
 import database as db
-import config  # <<< Импортируем config
+import config
 from characters import DEFAULT_CHARACTER_NAME, CHARACTER_CATEGORIES
-from constants import * # <<< Импортируем константы
+from constants import *
 
+# ... (словари CATEGORY_DESCRIPTIONS и CATEGORY_DISPLAY_NAMES без изменений) ...
 CATEGORY_DESCRIPTIONS = {
     "conversational": "А иногда ведь просто хочется поболтать по душам, без всяких там задач и серьезных решений, правда? Здесь тебя ждут персонажи, которые умеют слушать, слышать между строк и даже делиться своим настроением. Забудь про сухие факты – это те, кто готов просто быть рядом и разделить с тобой момент.",
     "specialists": "Нужен дельный совет или помощь в сложной ситуации? В этом разделе собрались настоящие мастера своего дела! От технического гуру до знатока растений – каждый из них готов поделиться глубокими знаниями, дать практичные советы и помочь разобраться в любом вопросе. Они здесь, чтобы решать твои проблемы, а не просто слушать!",
     "quest": "Надоело просто читать? Здесь ты – главный герой! Погружайся в захватывающие интерактивные миры, где каждый твой выбор реально меняет сюжет и ведет к одной из уникальных концовок. От пиратских приключений до борьбы за выживание — готовься, скучно точно не будет!",
-    # [Dev-Ассистент]: Ты можешь легко добавить описания для новых категорий здесь.
 }
 CATEGORY_DISPLAY_NAMES = {
     "conversational": "Разговорные",
@@ -25,12 +25,13 @@ CATEGORY_DISPLAY_NAMES = {
 }
 raw_text = "Добро пожаловать в уголок, где алгоритмы обретают... ну, почти душу! В разделе 'Персонажи' ты найдешь не просто наборы кода, а настоящих экспертов, готовых разрулить любую твою проблему; душевных собеседников, которые всегда поддержат разговор; и, конечно, харизматичных Мастеров квестов, что затянут тебя в эпические приключения. Выбери того, кто тебе по вкусу – и пусть начнется магия общения (или выживания)!"
 
-# ... остальная часть файла character_menus.py остается без изменений ...
+
 def clear_temp_state(context: ContextTypes.DEFAULT_TYPE):
     context.user_data['state'] = STATE_NONE
     context.user_data.pop(TEMP_CHAR_ID, None)
     context.user_data.pop(TEMP_CHAR_NAME, None)
     context.user_data.pop(TEMP_CHAR_PROMPT, None)
+
 async def get_user_id(update: Update) -> int:
     return await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
 
@@ -50,9 +51,8 @@ async def _build_standard_character_keyboard(user_id: int, context: ContextTypes
         for j in range(2):
             if i + j < len(characters_on_page):
                 char_name = characters_on_page[i+j]
-                display_name = f"✅ {escape_markdown(char_name, version=2)}" if char_name == current_char_name else escape_markdown(char_name, version=2)
-                # [Dev-Ассистент]: КЛЮЧЕВОЕ ИЗМЕНЕНИЕ! Меняем префикс с 'select_char_' на 'show_char_'.
-                # [Dev-Ассистент]: Теперь нажатие на эту кнопку покажет карточку, а не выберет персонажа.
+                # [Dev-Ассистент]: Используем html.escape для имен персонажей
+                display_name = f"✅ {html.escape(char_name)}" if char_name == current_char_name else html.escape(char_name)
                 row.append(InlineKeyboardButton(display_name, callback_data=f"show_char_{char_name}"))
         keyboard.append(row)
     pagination_row = []
@@ -71,7 +71,6 @@ async def _build_paginated_custom_char_keyboard(user_id: int, custom_chars: list
     end_index = start_index + config.CHARACTERS_PER_PAGE
     characters_on_page = custom_chars[start_index:end_index]
     
-    # [Dev-Ассистент]: ИЗМЕНЕНИЕ! Для режима 'view' теперь тоже используется новый префикс.
     action_prefixes = {'view': ("show_custom_char_", ""), 'edit': ("select_to_edit_", "🔧 "), 'delete': ("delete_select_", "🗑️ ")}
     callback_prefix, icon = action_prefixes[mode]
     
@@ -85,7 +84,8 @@ async def _build_paginated_custom_char_keyboard(user_id: int, custom_chars: list
         for j in range(2):
             if i + j < len(characters_on_page):
                 char = characters_on_page[i+j]
-                display_name = f"{icon}{escape_markdown(char['name'], version=2)}"
+                # [Dev-Ассистент]: Используем html.escape для имен персонажей
+                display_name = f"{icon}{html.escape(char['name'])}"
                 if mode == 'view' and char['name'] == current_char_name: display_name = f"✅ {display_name}"
                 row.append(InlineKeyboardButton(display_name, callback_data=f"{callback_prefix}{char['id']}"))
         keyboard.append(row)
@@ -105,14 +105,15 @@ async def _build_paginated_custom_char_keyboard(user_id: int, custom_chars: list
     return InlineKeyboardMarkup(keyboard)
 
 async def show_character_categories_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = (raw_text)
+    # [Dev-Ассистент]: Используем HTML для простого выделения жирным.
+    text = f"{html.escape(raw_text)}"
     keyboard = [[InlineKeyboardButton("🗣️ Разговорные", callback_data="category_conversational")],
                 [InlineKeyboardButton("🎓 Специалисты", callback_data="category_specialists")],
                 [InlineKeyboardButton("⚔️ Ролевые игры (Quest)", callback_data="category_quest")],
                 [InlineKeyboardButton("🎭 Мои Персонажи", callback_data="my_custom_characters_hub")],]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
-    else: await update.message.reply_text(text, reply_markup=reply_markup)
+    if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    else: await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
 async def show_standard_characters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, **kwargs) -> None:
     query = update.callback_query
@@ -125,24 +126,18 @@ async def show_standard_characters_menu(update: Update, context: ContextTypes.DE
     reply_markup = await _build_standard_character_keyboard(user_id, context)
     
     category_name = context.user_data.get(CURRENT_CHAR_CATEGORY_KEY, "conversational")
-    category_description = CATEGORY_DESCRIPTIONS.get(
-        category_name, 
-        "Выберите персонажа из этой категории:"
-    )
-    # 1. Получаем "красивое" имя из нашего нового словаря.
-    #    Если его там нет, просто используем старое с большой буквы.
+    category_description = CATEGORY_DESCRIPTIONS.get(category_name, "Выберите персонажа из этой категории:")
     display_category_name = CATEGORY_DISPLAY_NAMES.get(category_name, category_name.capitalize())
 
-    # 2. Используем это "красивое" имя в тексте.
+    # [Dev-Ассистент]: Переходим на HTML. Используем html.escape для безопасности.
     text = (
-        f"Категория: *{escape_markdown(display_category_name, version=2)}*\n\n"
-        f"{escape_markdown(category_description, version=2)}\n"
+        f"Категория: <b>{html.escape(display_category_name)}</b>\n\n"
+        f"{html.escape(category_description)}\n"
         f"Выберите персонажа:"
     )
-    # [Dev-Ассистент]: КОНЕЦ ИЗМЕНЕНИЙ
     
     try: 
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='MarkdownV2')
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
     except BadRequest as e:
         if "Message is not modified" in str(e): 
             await query.answer()
@@ -150,10 +145,11 @@ async def show_standard_characters_menu(update: Update, context: ContextTypes.DE
             raise
         
 async def show_my_characters_hub_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = "🎭 *Мои Персонажи*"
+    text = "🎭 <b>Мои Персонажи</b>"
     keyboard = [[InlineKeyboardButton("📖 Просмотр и выбор", callback_data="view_my_chars")],[InlineKeyboardButton("⚙️ Управление (создать, изменить, удалить)", callback_data="manage_custom_characters")],[InlineKeyboardButton("⬅️ Назад к категориям", callback_data="back_to_categories")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='MarkdownV2')
+    if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
 async def show_paginated_custom_characters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, is_new_message: bool = False) -> None:
     context.user_data.setdefault(CURRENT_CHAR_VIEW_PAGE_KEY, 0)
     user_id = await get_user_id(update)
@@ -165,24 +161,28 @@ async def show_paginated_custom_characters_menu(update: Update, context: Context
         if is_new_message: await update.message.reply_text(text, reply_markup=reply_markup)
         else: await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
         return
+        
     reply_markup = await _build_paginated_custom_char_keyboard(user_id, custom_chars, context, mode='view')
-    text = "*Ваши персонажи:*\n\nВыберите персонажа для общения:"
+    text = "<b>Ваши персонажи:</b>\n\nВыберите персонажа для общения:"
     try:
-        if is_new_message: await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='MarkdownV2')
-        else: await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='MarkdownV2')
+        if is_new_message: await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        else: await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
     except BadRequest as e:
         if "Message is not modified" in str(e): await update.callback_query.answer()
         else: raise
+
 async def show_manage_characters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     clear_temp_state(context)
-    text = "👾 *Управление персонажами*"
+    text = "👾 <b>Управление персонажами</b>"
     keyboard = [[InlineKeyboardButton("➕ Добавить", callback_data="add_custom_char_start")],[InlineKeyboardButton("🔧 Изменить", callback_data="edit_custom_char_start")],[InlineKeyboardButton("🗑️ Удалить", callback_data="delete_custom_char_start")],[InlineKeyboardButton("⬅️ Назад", callback_data="my_custom_characters_hub")]]
-    if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='MarkdownV2')
+    if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
 async def add_custom_char_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data['original_update_for_creation'] = update
     context.user_data['state'] = STATE_WAITING_FOR_NEW_CHAR_NAME
     keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_creation_action")]]
     await update.callback_query.edit_message_text("Введите имя для нового персонажа:", reply_markup=InlineKeyboardMarkup(keyboard))
+
 async def edit_custom_char_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     context.user_data[MANAGE_MODE_KEY] = 'edit'
@@ -192,6 +192,7 @@ async def edit_custom_char_start(update: Update, context: ContextTypes.DEFAULT_T
     if not custom_chars: return await query.answer("У вас нет персонажей для изменения.", show_alert=True)
     reply_markup = await _build_paginated_custom_char_keyboard(user_id, custom_chars, context, mode='edit')
     await query.edit_message_text("Выберите персонажа для изменения:", reply_markup=reply_markup)
+
 async def delete_custom_char_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     context.user_data[MANAGE_MODE_KEY] = 'delete'
@@ -201,6 +202,7 @@ async def delete_custom_char_start(update: Update, context: ContextTypes.DEFAULT
     if not custom_chars: return await query.answer("У вас нет персонажей для удаления.", show_alert=True)
     reply_markup = await _build_paginated_custom_char_keyboard(user_id, custom_chars, context, mode='delete')
     await query.edit_message_text("Выберите персонажа для удаления:", reply_markup=reply_markup)
+
 async def show_edit_character_menu(message_to_edit: Message, context: ContextTypes.DEFAULT_TYPE):
     char_id = context.user_data.get(TEMP_CHAR_ID)
     if not char_id:
@@ -215,7 +217,8 @@ async def show_edit_character_menu(message_to_edit: Message, context: ContextTyp
         context.user_data[TEMP_CHAR_NAME] = original_char['name']
         context.user_data[TEMP_CHAR_PROMPT] = original_char['prompt']
         char_name = original_char['name']
-    text = f"⚙️ Редактирование: *{escape_markdown(char_name, version=2)}*"
+        
+    text = f"⚙️ Редактирование: <b>{html.escape(char_name)}</b>"
     keyboard = [
         [InlineKeyboardButton("✏️ Изменить Имя", callback_data=f"edit_name_{char_id}")],
         [InlineKeyboardButton("📜 Изменить Промпт", callback_data=f"edit_prompt_{char_id}")],
@@ -223,13 +226,14 @@ async def show_edit_character_menu(message_to_edit: Message, context: ContextTyp
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_manage_chars")]
     ]
     try:
-        await message_to_edit.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='MarkdownV2')
+        await message_to_edit.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
     except BadRequest as e:
         if "Message is not modified" in str(e):
             pass
         else:
             logging.error(f"Не удалось отредактировать сообщение для меню: {e}", exc_info=True)
             raise
+
 async def prompt_for_new_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     context.user_data['state'] = STATE_EDITING_CHAR_NAME
@@ -244,13 +248,9 @@ async def prompt_for_new_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     text = f"Текущий промпт:\n<pre>{html.escape(prompt_preview)}</pre>\n\nОтправьте новый промпт (текст/файл)."
     context.user_data['state'] = STATE_EDITING_CHAR_PROMPT
 
-    # [Dev-Ассистент]: НАЧАЛО ИЗМЕНЕНИЙ
-    # [Dev-Ассистент]: Собираем новую клавиатуру с двумя кнопками.
     char_id = context.user_data.get(TEMP_CHAR_ID)
     keyboard = [
-        # [Dev-Ассистент]: Новая кнопка, которая будет запрашивать файл.
         [InlineKeyboardButton("📄 Показать полный промпт в файле txt", callback_data=f"show_full_prompt_{char_id}")],
-        # [Dev-Ассистент]: Старая кнопка отмены.
         [InlineKeyboardButton("❌ Отмена", callback_data=f"cancel_edit_action_{char_id}")]
     ]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
@@ -262,5 +262,5 @@ async def select_char_to_delete(update: Update, context: ContextTypes.DEFAULT_TY
     if not char_data:
         await query.answer("Персонаж не найден.", show_alert=True)
         return
-    keyboard = [[InlineKeyboardButton(f"✅ Да, удалить '{char_data['name']}'", callback_data=f"delete_confirm_{char_id}")],[InlineKeyboardButton("❌ Нет, назад", callback_data="delete_custom_char_start")]]
+    keyboard = [[InlineKeyboardButton(f"✅ Да, удалить '{html.escape(char_data['name'])}'", callback_data=f"delete_confirm_{char_id}")],[InlineKeyboardButton("❌ Нет, назад", callback_data="delete_custom_char_start")]]
     await query.edit_message_text("Вы уверены?", reply_markup=InlineKeyboardMarkup(keyboard))

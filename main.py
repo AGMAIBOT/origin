@@ -35,6 +35,7 @@ from telegram.constants import ChatAction
 from google.api_core.exceptions import ResourceExhausted
 import database as db
 import config
+import html
 from constants import (
     STATE_NONE, STATE_WAITING_FOR_IMAGE_PROMPT, TIER_LITE, TIER_PRO, 
     TIER_FREE, GPT_4_OMNI, CURRENT_IMAGE_GEN_PROVIDER_KEY, 
@@ -145,7 +146,10 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user
     char_name_to_reset = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
     display_name = char_name_to_reset
     await db.clear_chat_history(user_data['id'], char_name_to_reset)
-    await update.message.reply_text(f"История диалога с *{escape_markdown(display_name, version=2)}* очищена\\.", parse_mode='MarkdownV2')
+    
+    # [Dev-Ассистент]: Переходим на HTML
+    safe_display_name = html.escape(display_name)
+    await update.message.reply_text(f"История диалога с <b>{safe_display_name}</b> очищена.", parse_mode='HTML')
 
 @require_verification
 async def set_subscription_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
