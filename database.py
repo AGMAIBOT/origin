@@ -32,7 +32,8 @@ def _init_db():
                     last_request_date TEXT,
                     subscription_tier TEXT DEFAULT 'free' NOT NULL,
                     is_verified BOOLEAN NOT NULL DEFAULT 0,
-                    subscription_expiry_date DATETIME
+                    subscription_expiry_date DATETIME,
+                    output_format TEXT DEFAULT 'text' NOT NULL
                 )
             """)
             cur.execute("""
@@ -70,38 +71,46 @@ async def db_request(
     params: tuple = (), 
     fetch_one: bool = False, 
     fetch_all: bool = False
-) -> Any:
+) -> any:
     """
     Выполняет асинхронный запрос к базе данных SQLite с использованием aiosqlite
-    и возвращает результаты в виде стандартных словарей Python.
+    и ГАРАНТИРОВАННО СОХРАНЯЕТ ИЗМЕНЕНИЯ перед возвратом результата.
     """
     try:
         async with aiosqlite.connect(DB_FILE, timeout=10) as con:
             await con.execute("PRAGMA foreign_keys = ON")
             
-            # Мы по-прежнему используем Row factory для удобства доступа по именам колонок.
             con.row_factory = aiosqlite.Row
             
             async with con.cursor() as cur:
                 await cur.execute(query, params)
 
+                # [Dev-Ассистент]: ШАГ 1. Сначала получаем данные во временные переменные.
+                # [Dev-Ассистент]: Мы НЕ выходим из функции с помощью return.
+                result = None
                 if fetch_one:
                     row = await cur.fetchone()
-                    # ===> ВОТ ИСПРАВЛЕНИЕ <===
-                    # Если строка найдена, преобразуем ее в обычный dict перед возвратом.
-                    return dict(row) if row else None
-                
-                if fetch_all:
+                    result = dict(row) if row else None
+                elif fetch_all: # [Dev-Ассистент]: Важно использовать elif, т.к. эти режимы взаимоисключающие.
                     rows = await cur.fetchall()
-                    # ===> И ЗДЕСЬ ТОЖЕ <===
-                    # Преобразуем каждую строку в списке в обычный dict.
-                    return [dict(row) for row in rows]
+                    result = [dict(row) for row in rows]
+                else:
+                    # [Dev-Ассистент]: Для операций без fetch (просто UPDATE, DELETE)
+                    # [Dev-Ассистент]: или простого INSERT, мы будем использовать lastrowid.
+                    result = cur.lastrowid
                 
+                # [Dev-Ассистент]: ШАГ 2. НАЖИМАЕМ КНОПКУ "СОХРАНИТЬ".
+                # [Dev-Ассистент]: Этот commit теперь выполняется ВСЕГДА после любого execute.
                 await con.commit()
-                return cur.lastrowid
+                
+                # [Dev-Ассистент]: ШАГ 3. И только ПОСЛЕ сохранения мы возвращаем результат.
+                return result
 
     except aiosqlite.Error as e:
         logger.error(f"Ошибка выполнения DB запроса: {query} с параметрами {params}. Ошибка: {e}", exc_info=True)
+        # [Dev-Ассистент]: Добавляем await con.rollback() в случае ошибки, чтобы откатить транзакцию.
+        if 'con' in locals() and con.is_connected():
+            await con.rollback()
         return None
 
 # --- ВАЖНО: Все остальные функции в файле (add_or_update_user, get_user_by_id и т.д.) ---
@@ -185,6 +194,12 @@ async def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict]:
 
 async def verify_user(telegram_id: int) -> None:
     await db_request("UPDATE users SET is_verified = 1 WHERE telegram_id = ?", (telegram_id,))
+
+async def set_user_output_format(user_id: int, output_format: str) -> None:
+    """Устанавливает предпочтительный формат вывода для пользователя."""
+    query = "UPDATE users SET output_format = ? WHERE id = ?"
+    await db_request(query, (output_format, user_id))
+    logger.info(f"Для пользователя user_id={user_id} установлен формат вывода '{output_format}'.")
 
 # Вызов _init_db() остается здесь
 _init_db()

@@ -39,8 +39,9 @@ from constants import (
     STATE_NONE, STATE_WAITING_FOR_IMAGE_PROMPT, TIER_LITE, TIER_PRO, 
     TIER_FREE, GPT_4_OMNI, CURRENT_IMAGE_GEN_PROVIDER_KEY, 
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, GEMINI_STANDARD, 
-    LAST_IMAGE_PROMPT_KEY, LAST_RESPONSE_KEY
+    LAST_IMAGE_PROMPT_KEY, LAST_RESPONSE_KEY, OUTPUT_FORMAT_TEXT
 )
+from handlers.post_processing_handler import get_post_processing_keyboard
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler, onboarding_handler, post_processing_handler
 # [Dev-Ассистент]: Импортируем нашу новую утилиту и GPTClient для Whisper
@@ -54,41 +55,49 @@ from handlers.post_processing_handler import get_post_processing_keyboard
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
-    ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
+    # --- Шаг 1: Подготовка данных ---
     user_id = user_data['id']
     char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
+    ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
+    output_format = user_data.get('output_format', OUTPUT_FORMAT_TEXT)
+
+    # --- Шаг 2: Получение системной инструкции ---
+    system_instruction = "Ты — полезный ассистент." # [Dev-Ассистент]: Значение по умолчанию
     custom_char = await db.get_custom_character_by_name(user_id, char_name)
-
-    system_instruction = ""
-    default_prompt = "Ты — полезный ассистент."
-
     if custom_char:
         system_instruction = custom_char['prompt']
     else:
         char_info = ALL_PROMPTS.get(char_name)
         if char_info:
-            system_instruction = char_info.get('prompt', default_prompt)
-        else:
-            system_instruction = default_prompt
-            
+            system_instruction = char_info.get('prompt', system_instruction)
+
+    # --- Шаг 3: Создание AI клиента и проверка возможностей ---
     try:
         caps = get_ai_client_with_caps(ai_provider, system_instruction)
         ai_client = caps.client
     except ValueError as e:
         logger.error(f"Ошибка создания AI клиента: {e}")
-        # [Dev-Ассистент]: Упрощаем отправку ошибки
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Ошибка конфигурации: {e}")
         return
     
-    if is_photo or is_document:
-        pass
-    
+    # [Dev-Ассистент]: Проверки на Vision и обработку файлов
+    if is_photo and not caps.supports_vision:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"К сожалению, выбранная модель AI не умеет обрабатывать изображения.")
+        return
+    if is_document and caps.file_char_limit == 0:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Обработка файлов для выбранной модели AI не поддерживается.")
+        return
+    if is_document and document_char_count > caps.file_char_limit:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Файл слишком большой. Максимум: {caps.file_char_limit} символов, в вашем файле: {document_char_count}.")
+        return
+
+    # --- Шаг 4: Работа с историей чата ---
     history_from_db = await db.get_chat_history(user_id, char_name, limit=config.DEFAULT_HISTORY_LIMIT)
     chat_history = history_from_db + context.chat_data.get('history', [])
-    context.chat_data.pop('history', None)
+    context.chat_data.pop('history', None) # Очищаем временную историю
 
+    # --- Шаг 5: Основной запрос к AI и отправка ответа ---
     try:
-        # [Dev-Ассистент]: Уведомляем пользователя о начале работы
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
         if is_photo and image_obj:
@@ -98,18 +107,21 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
             response_text, _ = await ai_client.get_text_response(chat_history, user_content)
             db_user_content = user_content
             
+        # [Dev-Ассистент]: Сохраняем все в БД ДО отправки пользователю
         await db.add_message_to_history(user_id, char_name, 'user', db_user_content)
         await db.add_message_to_history(user_id, char_name, 'model', response_text)
 
+        # [Dev-Ассистент]: Сохраняем последний ответ для кнопок пост-обработки
         context.user_data[LAST_RESPONSE_KEY] = response_text
+        
+        # [Dev-Ассистент]: Генерируем клавиатуру, если нужна
         reply_markup = get_post_processing_keyboard(len(response_text))
         
-        # [Dev-Ассистент]: ИЗМЕНЕНИЕ! Передаем context в send_long_message.
-        await send_long_message(update, context, response_text, reply_markup=reply_markup)
+        # [Dev-Ассистент]: Отправляем ответ в нужном формате
+        await send_long_message(update, context, response_text, reply_markup=reply_markup, output_format=output_format)
 
     except Exception as e:
-        logger.error(f"Ошибка AI запроса для user_id={user_data.get('id', 'N/A')}: {e}", exc_info=True)
-        # [Dev-Ассистент]: ИЗМЕНЕНИЕ! Используем универсальный способ отправки сообщения об ошибке.
+        logger.error(f"Ошибка AI запроса для user_id={user_id}: {e}", exc_info=True)
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Произошла ошибка при обращении к AI.")
 
 # ... (команды start, reset, set_subscription, show_wip_notice остаются без изменений) ...
@@ -117,9 +129,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await db.add_or_update_user(user.id, user.full_name, user.username)
     user_data = await db.get_user_by_telegram_id(user.id)
+
     if not user_data or not user_data.get('is_verified'):
         await captcha_handler.send_captcha(update, context)
         return
+
     welcome_text = (f"С возвращением, {user.mention_html()}!\n\n"
                     "Я твой многофункциональный ассистент. "
                     "Чтобы задать мне определенную роль или личность, воспользуйся меню <b>'Персонажи'</b>.")
@@ -259,7 +273,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
         
         return
     
-
     if await characters_handler.handle_stateful_message(update, context):
         return
     tier_params = config.SUBSCRIPTION_TIERS[await get_actual_user_tier(user_data)]
@@ -366,7 +379,7 @@ def main():
     app.add_handler(CommandHandler("setsub", set_subscription_command))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Выбор AI$"), require_verification(ai_selection_handler.show_ai_mode_selection_hub)))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Персонажи$"), require_verification(character_menus.show_character_categories_menu)))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Профиль$"), profile_handler.show_profile))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^⚙️ Профиль$"), profile_handler.show_profile_hub))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^🤖 AGM, научи меня!$"), require_verification(onboarding_handler.start_onboarding)))
     
     # [Dev-Ассистент]: Регистрируем новый обработчик для голоса

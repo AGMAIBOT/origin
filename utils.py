@@ -9,14 +9,14 @@ import config
 from io import BytesIO
 from pydub import AudioSegment
 import database as db
-from constants import TIER_FREE
+from constants import TIER_FREE, OUTPUT_FORMAT_TEXT, OUTPUT_FORMAT_TXT, OUTPUT_FORMAT_PDF
 logger = logging.getLogger(__name__)
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton("Персонажи"), KeyboardButton("Выбор AI")],
-        # [Dev-Ассистент]: МЕНЯЕМ ТЕКСТ КНОПКИ ЗДЕСЬ
-        [KeyboardButton("Профиль"), KeyboardButton("🤖 AGM, научи меня!")]
+        # [Dev-Ассистент]: Добавляем иконку к кнопке Профиль.
+        [KeyboardButton("⚙️ Профиль"), KeyboardButton("🤖 AGM, научи меня!")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -31,35 +31,51 @@ async def delete_message_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def send_long_message(
     update: Update, 
-    context: ContextTypes.DEFAULT_TYPE, # [Dev-Ассистент]: Добавляем context для отправки сообщений
+    context: ContextTypes.DEFAULT_TYPE,
     text: str, 
-    reply_markup: InlineKeyboardMarkup = None
+    reply_markup: InlineKeyboardMarkup = None,
+    output_format: str = OUTPUT_FORMAT_TEXT # [Dev-Ассистент]: Новый параметр!
 ):
     """
-    Разбивает длинное сообщение на части и отправляет их по отдельности.
-    [Dev-Ассистент]: Теперь умеет отправлять ответ как на сообщение, так и на callback.
+    Отправляет ответ пользователю в заданном формате (текст или файл).
     """
-    # [Dev-Ассистент]: Определяем, куда отправлять ответ.
-    # Если есть message - это ответ на сообщение. Если нет - это ответ на callback, нужен chat_id.
-    message_to_reply = update.message or (update.callback_query and update.callback_query.message)
-    chat_id = message_to_reply.chat_id if message_to_reply else update.effective_chat.id
+    message_to_interact = update.message or (update.callback_query and update.callback_query.message)
+    chat_id = message_to_interact.chat_id
 
-    max_length = 4096
-    if len(text) <= max_length:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=reply_markup
-        )
-    else:
-        parts = [text[i:i + max_length] for i in range(0, len(text), max_length)]
-        for i, part in enumerate(parts):
-            current_reply_markup = reply_markup if i == len(parts) - 1 else None
-            await context.bot.send_message(
+    # --- Маршрутизация по формату вывода ---
+    
+    # Сценарий 1: Отправка текстом в чат
+    if output_format == OUTPUT_FORMAT_TEXT:
+        max_length = 4096
+        if len(text) <= max_length:
+            await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+        else:
+            parts = [text[i:i + max_length] for i in range(0, len(text), max_length)]
+            for i, part in enumerate(parts):
+                current_reply_markup = reply_markup if i == len(parts) - 1 else None
+                await context.bot.send_message(chat_id=chat_id, text=part, reply_markup=current_reply_markup)
+
+    # Сценарий 2: Отправка файлом .txt
+    elif output_format == OUTPUT_FORMAT_TXT:
+        try:
+            text_bytes = text.encode('utf-8')
+            text_file = BytesIO(text_bytes)
+            # Отправляем файл как документ
+            await context.bot.send_document(
                 chat_id=chat_id,
-                text=part,
-                reply_markup=current_reply_markup
+                document=text_file,
+                filename="response.txt",
+                caption="Ваш ответ в формате .txt"
             )
+        except Exception as e:
+            logger.error(f"Ошибка при создании .txt файла: {e}", exc_info=True)
+            await context.bot.send_message(chat_id=chat_id, text="Не удалось сформировать .txt файл. Вот ответ текстом:")
+            await send_long_message(update, context, text, reply_markup, OUTPUT_FORMAT_TEXT)
+
+    # Сценарий 3: Заглушка для PDF
+    elif output_format == OUTPUT_FORMAT_PDF:
+        await context.bot.send_message(chat_id=chat_id, text="Режим вывода в PDF пока не реализован. Вот ответ текстом:")
+        await send_long_message(update, context, text, reply_markup, OUTPUT_FORMAT_TEXT)
             
 async def get_actual_user_tier(user_data: dict) -> str:
     """
@@ -79,23 +95,31 @@ async def get_actual_user_tier(user_data: dict) -> str:
 def require_verification(func):
     """
     Декоратор, который проверяет, верифицирован ли пользователь.
-    Если нет - блокирует выполнение функции и просит пройти проверку.
+    [Dev-Ассистент]: ИСПРАВЛЕННАЯ ВЕРСИЯ - всегда проверяет актуальные данные из БД.
     """
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        if (update.message and update.message.text and update.message.text.startswith('/start')) or \
-           (update.message and update.message.entities and any(e.type == 'bot_command' and update.message.text[e.offset:e.offset+e.length] == '/start' for e in update.message.entities)):
+        if update.message and update.message.text and update.message.text.startswith('/start'):
             return await func(update, context, *args, **kwargs)
+
         user_data = await db.get_user_by_telegram_id(update.effective_user.id)
+
         if user_data and user_data.get('is_verified'):
             return await func(update, context, *args, **kwargs)
         else:
-            message = update.message or update.callback_query.message
-            await message.reply_text(
-                "Для доступа к функциям бота, пожалуйста, пройдите проверку.\n"
-                "Нажмите /start"
+            # [Dev-Ассистент]: Если пользователь не найден или не верифицирован, отправляем его на капчу.
+            # [Dev-Ассистент]: Важно! Мы используем send_message, чтобы не пытаться редактировать
+            # [Dev-Ассистент]: несуществующее сообщение, если пользователь нажал на кнопку.
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Для доступа к функциям бота, пожалуйста, пройдите проверку.\nНажмите /start"
             )
-            return
+            # [Dev-Ассистент]: Если это был callback (нажатие на inline-кнопку),
+            # [Dev-Ассистент]: отвечаем на него, чтобы убрать "часики" на кнопке.
+            if update.callback_query:
+                await update.callback_query.answer()
+            return # [Dev-Ассистент]: Важно! Прекращаем выполнение дальнейшего кода.
+            
     return wrapper
 
 def inject_user_data(func):

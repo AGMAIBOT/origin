@@ -48,3 +48,21 @@ LAST_RESPONSE_KEY = "last_response_text" # Ключ для хранения по
 ACTION_SHORTEN = "action_shorten"
 ACTION_EXPAND = "action_expand"
 ACTION_REPHRASE = "action_rephrase"
+PROFILE_HUB_SETTINGS = "profile_hub_settings"
+PROFILE_HUB_WALLET = "profile_hub_wallet"
+PROFILE_HUB_SHOP = "profile_hub_shop"
+
+# Кнопки в меню настроек
+SETTINGS_BACK_TO_PROFILE_HUB = "settings_back_to_profile_hub"
+SETTINGS_OUTPUT_FORMAT = "settings_output_format"
+
+# Кнопки в меню формата вывода
+FORMAT_SET_TEXT = "format_set_text"
+FORMAT_SET_TXT = "format_set_txt"
+FORMAT_SET_PDF = "format_set_pdf" # Задел на будущее
+FORMAT_BACK_TO_SETTINGS = "format_back_to_settings"
+
+# Строковые идентификаторы форматов для БД
+OUTPUT_FORMAT_TEXT = "text"
+OUTPUT_FORMAT_TXT = "txt"
+OUTPUT_FORMAT_PDF = "pdf"

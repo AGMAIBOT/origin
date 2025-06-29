@@ -1,10 +1,8 @@
 # handlers/captcha_handler.py (НОВЫЙ ФАЙЛ)
-
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
-
 import database as db
 from utils import get_main_keyboard
 
@@ -59,11 +57,24 @@ async def handle_captcha_callback(update: Update, context: ContextTypes.DEFAULT_
 
     if user_answer == correct_answer:
         await query.answer("✅ Отлично! Проверка пройдена.", show_alert=True)
-        await db.verify_user(update.effective_user.id)
+        
+        user = update.effective_user
+        
+        # [Dev-Ассистент]: НАЧАЛО ИСПРАВЛЕНИЯ.
+        # [Dev-Ассистент]: ШАГ 1: Гарантируем, что пользователь существует в базе.
+        # [Dev-Ассистент]: Эта функция либо создаст нового пользователя, либо обновит данные существующего.
+        # [Dev-Ассистент]: Она идемпотентна, то есть ее безопасно вызывать несколько раз.
+        await db.add_or_update_user(user.id, user.full_name, user.username)
+        
+        # [Dev-Ассистент]: ШАГ 2: Теперь мы на 100% уверены, что запись существует, и можем ее обновить.
+        await db.verify_user(user.id)
+        # [Dev-Ассистент]: КОНЕЦ ИСПРАВЛЕНИЯ.
+
         context.user_data.pop('captcha_answer', None)
         await query.delete_message()
+        
         welcome_text = (
-            f"Добро пожаловать, {update.effective_user.mention_html()}!\n\n"
+            f"Добро пожаловать, {user.mention_html()}!\n\n"
             "Я твой многофункциональный ассистент. "
             "Чтобы задать мне определенную роль или личность, воспользуйся меню <b>'Персонажи'</b>."
         )
