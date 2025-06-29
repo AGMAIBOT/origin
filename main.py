@@ -80,8 +80,8 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     [Dev-Ассистент]: Полностью переработанная функция с надежным потоком данных.
     1. Получает "сырой" ответ от LLM.
     2. Сохраняет "сырой" ответ в БД.
-    3. Обрабатывает ответ для нужного формата вывода (HTML или очистка для файлов).
-    4. Отправляет пользователю обработанный результат.
+    3. Обрабатывает "сырой" ответ, конвертируя его в HTML.
+    4. Передает уже готовый HTML на отправку.
     """
     # --- Шаг 1: Подготовка данных ---
     user_id = user_data['id']
@@ -109,7 +109,6 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await context.bot.send_message(chat_id=chat_id, text=f"Ошибка конфигурации: {e}")
         return
     
-    # [Dev-Ассистент]: Проверки на Vision и обработку файлов (без изменений)
     if is_photo and not caps.supports_vision:
         await context.bot.send_message(chat_id=chat_id, text="К сожалению, выбранная модель AI не умеет обрабатывать изображения.")
         return
@@ -131,7 +130,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     )
     
     raw_response_text = None
-    processed_text_for_user = None
+    processed_html_text = None # [Dev-Ассистент]: Теперь это ЕДИНСТВЕННЫЙ формат для вывода
     reply_markup = None
 
     try:
@@ -147,22 +146,18 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await db.add_message_to_history(user_id, char_name, 'user', db_user_content)
         await db.add_message_to_history(user_id, char_name, 'model', raw_response_text)
 
-        # --- Шаг 7: Постобработка для пользователя ---
+        # --- Шаг 7: Постобработка и конвертация в HTML ---
         context.user_data[LAST_RESPONSE_KEY] = raw_response_text
         reply_markup = get_post_processing_keyboard(len(raw_response_text))
         
-        # [Dev-Ассистент]: Если выводим как текст, конвертируем в HTML.
-        # [Dev-Ассистент]: Если выводим как файл (TXT/PDF), передаем "сырой" текст,
-        # [Dev-Ассистент]: а `send_long_message` сама очистит его от разметки.
-        if output_format == OUTPUT_FORMAT_TEXT:
-            processed_text_for_user = utils.markdown_to_html(raw_response_text)
-        else:
-            processed_text_for_user = raw_response_text
+        # [Dev-Ассистент]: КЛЮЧЕВОЕ ИЗМЕНЕНИЕ!
+        # [Dev-Ассистент]: Мы ВСЕГДА конвертируем сырой Markdown в HTML.
+        processed_html_text = utils.markdown_to_html(raw_response_text)
 
     except Exception as e:
         logger.error(f"Ошибка AI запроса для user_id={user_id}: {e}", exc_info=True)
-        # В случае ошибки, текст будет простым, без разметки
-        processed_text_for_user = "Произошла ошибка при обращении к AI."
+        # В случае ошибки, текст будет простым, но обернутым в HTML для консистентности
+        processed_html_text = "<b>Произошла ошибка при обращении к AI.</b>"
     
     finally:
         # --- Гарантированная остановка индикатора ---
@@ -170,16 +165,17 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         try:
             await indicator_task
         except CancelledError:
-            pass
+            pass # Это ожидаемое завершение, игнорируем.
         
-        # --- Шаг 8: Отправка финального результата пользователю ---
-        if processed_text_for_user:
-            # [Dev-Ассистент]: Определяем, нужно ли показывать кнопки пост-обработки
-            final_reply_markup = reply_markup if "ошибка" not in processed_text_for_user else None
+        # --- Шаг 8: Отправка готового результата ---
+        if processed_html_text:
+            final_reply_markup = reply_markup if "ошибка" not in processed_html_text else None
             
+            # [Dev-Ассистент]: Передаем уже обработанный HTML в send_long_message.
+            # [Dev-Ассистент]: Она сама разберется, как его показать в разных форматах.
             await utils.send_long_message(
                 update, context, 
-                text=processed_text_for_user,
+                text=processed_html_text,
                 reply_markup=final_reply_markup, 
                 output_format=output_format
             )
