@@ -12,7 +12,7 @@ from io import BytesIO
 from pydub import AudioSegment
 from fpdf import FPDF
 import asyncio
-
+import constants
 import database as db
 from constants import TIER_FREE, OUTPUT_FORMAT_TEXT, OUTPUT_FORMAT_TXT, OUTPUT_FORMAT_PDF
 logger = logging.getLogger(__name__)
@@ -250,3 +250,31 @@ def convert_oga_to_mp3_in_memory(oga_bytearray: bytearray) -> bytes:
     mp3_buffer = BytesIO()
     audio.export(mp3_buffer, format="mp3")
     return mp3_buffer.getvalue()
+async def get_user_ai_provider(user_data: dict) -> str:
+    """
+    [Dev-Ассистент]: Определяет AI-провайдера для пользователя по четким правилам.
+    [Dev-Ассистент]: Приоритет №1: Личный выбор пользователя из его профиля.
+    [Dev-Ассистент]: Приоритет №2: Провайдер по умолчанию для его тарифного плана из config.py.
+    [Dev-Ассистент]: Приоритет №3: Глобальный "запасной" провайдер, если что-то пошло не так.
+    """
+    # Приоритет №1: Личный выбор пользователя (например, у Pro-тарифа)
+    personal_choice = user_data.get('current_ai_provider')
+    if personal_choice:
+        logger.debug(f"Используем личный выбор пользователя {user_data['id']}: {personal_choice}")
+        return personal_choice
+
+    # Приоритет №2: Настройка по умолчанию из тарифа
+    user_tier = await get_actual_user_tier(user_data)
+    tier_config = config.SUBSCRIPTION_TIERS.get(user_tier)
+    
+    if tier_config and tier_config.get('ai_provider'):
+        tier_default_provider = tier_config['ai_provider']
+        logger.debug(f"Используем провайдера по умолчанию для тарифа '{user_tier}': {tier_default_provider}")
+        return tier_default_provider
+    
+    # Приоритет №3: Абсолютный "спасательный круг"
+    logger.warning(
+        f"Не удалось определить провайдера для тарифа '{user_tier}'. "
+        f"Используется глобальный запасной вариант: {constants.GEMINI_STANDARD}"
+    )
+    return constants.GEMINI_STANDARD

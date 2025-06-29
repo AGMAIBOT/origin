@@ -87,7 +87,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     user_id = user_data['id']
     chat_id = update.effective_chat.id
     char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
-    ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
+    ai_provider = await utils.get_user_ai_provider(user_data)
     output_format = user_data.get('output_format', OUTPUT_FORMAT_TEXT)
 
     # --- Шаг 2: Получение системной инструкции ---
