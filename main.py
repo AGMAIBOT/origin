@@ -26,8 +26,9 @@ ADMIN_IDS = parse_admin_ids(admin_ids_from_env)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 from io import BytesIO
+from asyncio import CancelledError
 from PIL import Image
-from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 # [Dev-Ассистент]: Добавляем filters.VOICE для обработки голосовых
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.helpers import escape_markdown
@@ -55,15 +56,34 @@ from handlers.post_processing_handler import get_post_processing_keyboard
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+async def _keep_typing_indicator_alive(bot: Bot, chat_id: int):
+    """
+    [Dev-Ассистент]: НАША НОВАЯ ФОНОВАЯ ЗАДАЧА.
+    В цикле отправляет действие 'typing' каждые 4 секунды.
+    """
+    try:
+        while True:
+            await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            await asyncio.sleep(4)
+    except CancelledError:
+        # [Dev-Ассистент]: Это ожидаемая ошибка, когда мы останавливаем задачу.
+        # [Dev-Ассистент]: Она нужна, чтобы чисто выйти из цикла.
+        logger.debug(f"Задача индикатора для чата {chat_id} отменена.")
+        # [Dev-Ассистент]: Перебрасываем ошибку, чтобы asyncio понял, что задача действительно завершилась.
+        raise
+    except Exception as e:
+        # [Dev-Ассистент]: Логируем любые другие, неожиданные ошибки.
+        logger.warning(f"Ошибка в задаче индикатора для чата {chat_id}: {e}")
+
 async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
-    # --- Шаг 1: Подготовка данных ---
     user_id = user_data['id']
+    chat_id = update.effective_chat.id # [Dev-Ассистент]: Получаем chat_id для индикатора
     char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
     ai_provider = user_data.get('current_ai_provider') or GEMINI_STANDARD
     output_format = user_data.get('output_format', OUTPUT_FORMAT_TEXT)
 
     # --- Шаг 2: Получение системной инструкции ---
-    system_instruction = "Ты — полезный ассистент." # [Dev-Ассистент]: Значение по умолчанию
+    system_instruction = "Ты — полезный ассистент."
     custom_char = await db.get_custom_character_by_name(user_id, char_name)
     if custom_char:
         system_instruction = custom_char['prompt']
@@ -78,29 +98,33 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         ai_client = caps.client
     except ValueError as e:
         logger.error(f"Ошибка создания AI клиента: {e}")
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Ошибка конфигурации: {e}")
+        await context.bot.send_message(chat_id=chat_id, text=f"Ошибка конфигурации: {e}")
         return
     
-    # [Dev-Ассистент]: Проверки на Vision и обработку файлов
     if is_photo and not caps.supports_vision:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"К сожалению, выбранная модель AI не умеет обрабатывать изображения.")
+        await context.bot.send_message(chat_id=chat_id, text="К сожалению, выбранная модель AI не умеет обрабатывать изображения.")
         return
     if is_document and caps.file_char_limit == 0:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Обработка файлов для выбранной модели AI не поддерживается.")
+        await context.bot.send_message(chat_id=chat_id, text="Обработка файлов для выбранной модели AI не поддерживается.")
         return
     if is_document and document_char_count > caps.file_char_limit:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Файл слишком большой. Максимум: {caps.file_char_limit} символов, в вашем файле: {document_char_count}.")
+        await context.bot.send_message(chat_id=chat_id, text=f"Файл слишком большой. Максимум: {caps.file_char_limit} символов, в вашем файле: {document_char_count}.")
         return
 
     # --- Шаг 4: Работа с историей чата ---
     history_from_db = await db.get_chat_history(user_id, char_name, limit=config.DEFAULT_HISTORY_LIMIT)
     chat_history = history_from_db + context.chat_data.get('history', [])
-    context.chat_data.pop('history', None) # Очищаем временную историю
+    context.chat_data.pop('history', None)
 
-    # --- Шаг 5: Основной запрос к AI и отправка ответа ---
+    # [Dev-Ассистент]: Запускаем нашу фоновую задачу
+    indicator_task = asyncio.create_task(
+        _keep_typing_indicator_alive(context.bot, chat_id)
+    )
+    
+    response_text = None
     try:
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-
+        # --- Шаг 5: Основной запрос к AI и отправка ответа ---
+        # [Dev-Ассистент]: Убрали send_chat_action отсюда, т.к. теперь это делает фоновая задача.
         if is_photo and image_obj:
             response_text, _ = await ai_client.get_image_response(chat_history, user_content, image_obj)
             db_user_content = f"[Изображение] {user_content}"
@@ -108,22 +132,35 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
             response_text, _ = await ai_client.get_text_response(chat_history, user_content)
             db_user_content = user_content
             
-        # [Dev-Ассистент]: Сохраняем все в БД ДО отправки пользователю
         await db.add_message_to_history(user_id, char_name, 'user', db_user_content)
         await db.add_message_to_history(user_id, char_name, 'model', response_text)
 
-        # [Dev-Ассистент]: Сохраняем последний ответ для кнопок пост-обработки
         context.user_data[LAST_RESPONSE_KEY] = response_text
-        
-        # [Dev-Ассистент]: Генерируем клавиатуру, если нужна
         reply_markup = get_post_processing_keyboard(len(response_text))
         
-        # [Dev-Ассистент]: Отправляем ответ в нужном формате
-        await send_long_message(update, context, response_text, reply_markup=reply_markup, output_format=output_format)
-
+        # [Dev-Ассистент]: Важно! Отправляем ответ только после того, как все готово.
+        # [Dev-Ассистент]: Фоновая задача будет остановлена в блоке finally.
+        
     except Exception as e:
         logger.error(f"Ошибка AI запроса для user_id={user_id}: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="Произошла ошибка при обращении к AI.")
+        # [Dev-Ассистент]: Сохраняем текст ошибки, чтобы отправить его пользователю
+        response_text = "Произошла ошибка при обращении к AI."
+    
+    finally:
+        # [Dev-Ассистент]: КЛЮЧЕВОЙ БЛОК!
+        # [Dev-Ассистент]: Этот код выполнится ВСЕГДА: и после успешного ответа, и после ошибки.
+        # [Dev-Ассистент]: 1. Отменяем нашу фоновую задачу.
+        indicator_task.cancel()
+        # [Dev-Ассистент]: 2. Ждем, пока она действительно завершится.
+        try:
+            await indicator_task
+        except CancelledError:
+            pass # Это ожидаемое завершение, игнорируем.
+        
+        # [Dev-Ассистент]: 3. Только теперь, когда индикатор точно остановлен,
+        # [Dev-Ассистент]: отправляем пользователю финальное сообщение (ответ или ошибку).
+        if response_text:
+            await send_long_message(update, context, response_text, reply_markup=reply_markup if "ошибка" not in response_text else None, output_format=output_format)
 
 # ... (команды start, reset, set_subscription, show_wip_notice остаются без изменений) ...
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
