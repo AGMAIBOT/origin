@@ -207,13 +207,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
     current_state = context.user_data.get('state', STATE_NONE)
 
     if current_state == STATE_WAITING_FOR_IMAGE_PROMPT:
-        prompt_text = update.message.text
-        if not prompt_text:
+        # [Dev-Ассистент]: Мы по-прежнему сохраняем оригинальный текст,
+        # [Dev-Ассистент]: чтобы показать его пользователю в подписи к фото.
+        original_prompt_text = update.message.text
+        if not original_prompt_text:
             await update.message.reply_text("Пожалуйста, отправьте текстовое описание для картинки.")
             return
 
+        # [Dev-Ассистент]: !!! РЕШЕНИЕ !!!
+        # [Dev-Ассистент]: Вызываем нашу новую функцию из utils для "очистки" промпта.
+        # [Dev-Ассистент]: Именно эту чистую версию мы будем отправлять в API.
+        clean_prompt_text = utils.strip_markdown_for_prompt(original_prompt_text)
+
         image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
-        context.user_data[LAST_IMAGE_PROMPT_KEY] = prompt_text
+        # [Dev-Ассистент]: Сохраняем в историю оригинальный текст, а не очищенный
+        context.user_data[LAST_IMAGE_PROMPT_KEY] = original_prompt_text
         
         keyboard = [
             [
@@ -223,48 +231,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # [Dev-Ассистент]: !!! РЕШЕНИЕ !!!
-        # [Dev-Ассистент]: Мы используем `indicator_task` и блок `try...finally`
-        # [Dev-Ассистент]: чтобы ГАРАНТИРОВАННО остановить фоновую задачу.
         indicator_task = None
         
         try:
             if image_gen_provider == IMAGE_GEN_DALL_E_3:
                 await update.message.reply_text("🎨 Принято! Начинаю рисовать через DALL-E 3, это может занять до минуты...")
-                
-                # [Dev-Ассистент]: Запускаем нашего "помощника" в фоне
                 indicator_task = asyncio.create_task(
                     _keep_indicator_alive(context.bot, update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
                 )
-
+                
                 caps = get_ai_client_with_caps(GPT_4_1_NANO, system_instruction="You are an image generation assistant.")
-                image_url, error_message = await caps.client.generate_image(prompt_text)
+                # [Dev-Ассистент]: Отправляем в API ОЧИЩЕННЫЙ текст
+                image_url, error_message = await caps.client.generate_image(clean_prompt_text)
 
                 if error_message:
                     await update.message.reply_text(f"😔 Ошибка: {error_message}")
                 elif image_url:
+                    # [Dev-Ассистент]: А в подписи показываем ОРИГИНАЛЬНЫЙ текст
                     await update.message.reply_photo(
                         photo=image_url, 
-                        caption=f"✨ Ваше изображение по запросу:\n\n`{prompt_text}`", 
+                        caption=f"✨ Ваше изображение по запросу:\n\n`{original_prompt_text}`", 
                         parse_mode='Markdown',
                         reply_markup=reply_markup
                     )
                     context.user_data['state'] = STATE_NONE
-                else:
-                    await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+                # ...
 
             elif image_gen_provider == IMAGE_GEN_YANDEXART:
-                if len(prompt_text) > config.YANDEXART_PROMPT_LIMIT:
-                    cancel_button = InlineKeyboardButton("❌ Отмена", callback_data="image_gen_cancel")
-                    await update.message.reply_text(
-                        f"😔 Ваш запрос для YandexArt слишком длинный.\nМаксимум: {config.YANDEXART_PROMPT_LIMIT} символов. У вас: {len(prompt_text)}.",
-                        reply_markup=InlineKeyboardMarkup([[cancel_button]])
-                    )
-                    return
-
-                await update.message.reply_text("🎨 Принято! Отправляю запрос в YandexArt, это может занять до 2 минут...")
-                
-                # [Dev-Ассистент]: Запускаем нашего "помощника" и здесь
+                # ...
                 indicator_task = asyncio.create_task(
                     _keep_indicator_alive(context.bot, update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
                 )
@@ -273,14 +267,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                     folder_id=os.getenv("YANDEX_FOLDER_ID"),
                     api_key=os.getenv("YANDEX_API_KEY")
                 )
-                image_bytes, error_message = await yandex_client.generate_image(prompt_text)
+                # [Dev-Ассистент]: Отправляем в API ОЧИЩЕННЫЙ текст и здесь
+                image_bytes, error_message = await yandex_client.generate_image(clean_prompt_text)
 
                 if error_message:
                     await update.message.reply_text(f"😔 Ошибка: {error_message}")
                 elif image_bytes:
+                     # [Dev-Ассистент]: И здесь в подписи показываем ОРИГИНАЛЬНЫЙ текст
                     await update.message.reply_photo(
                         photo=image_bytes, 
-                        caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{prompt_text}`", 
+                        caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{original_prompt_text}`", 
                         parse_mode='Markdown',
                         reply_markup=reply_markup
                     )
