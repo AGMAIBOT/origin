@@ -1,4 +1,3 @@
-# main.py
 
 import os
 import logging
@@ -36,7 +35,7 @@ import config
 import html
 from constants import (
     STATE_NONE, STATE_WAITING_FOR_IMAGE_PROMPT, TIER_LITE, TIER_PRO, 
-    TIER_FREE, GPT_4_1_NANO, CURRENT_IMAGE_GEN_PROVIDER_KEY, 
+    TIER_FREE, GPT_1, CURRENT_IMAGE_GEN_PROVIDER_KEY, 
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, GEMINI_STANDARD, 
     LAST_IMAGE_PROMPT_KEY, LAST_RESPONSE_KEY, OUTPUT_FORMAT_TEXT
 )
@@ -75,10 +74,66 @@ async def _keep_typing_indicator_alive(bot: Bot, chat_id: int):
 async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
     user_id = user_data['id']
     chat_id = update.effective_chat.id
-    char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
-    ai_provider = await utils.get_user_ai_provider(user_data)
-    output_format = user_data.get('output_format', OUTPUT_FORMAT_TEXT)
+    
+    # [Dev-Ассистент]: ШАГ 1.5: ПРИНУДИТЕЛЬНАЯ ПРОВЕРКА И СБРОС НАСТРОЕК
+    user_tier_name = await utils.get_actual_user_tier(user_data)
+    user_tier_level = utils.TIER_HIERARCHY.get(user_tier_name, 0)
+    
+    # --- Проверка AI Провайдера ---
+    # [Dev-Ассистент]: !!! РЕШЕНИЕ !!!
+    # [Dev-Ассистент]: ШАГ 1: Сначала мы смотрим ТОЛЬКО на то, что у пользователя сохранено в БД.
+    personal_ai_choice = user_data.get('current_ai_provider')
+    available_providers = config.SUBSCRIPTION_TIERS[user_tier_name]['available_providers']
+    
+    # [Dev-Ассистент]: ШАГ 2: Мы запускаем проверку и сброс ТОЛЬКО ЕСЛИ у пользователя был личный выбор,
+    # [Dev-Ассистент]: и этот выбор стал недоступен.
+    if personal_ai_choice and personal_ai_choice not in available_providers:
+        logger.warning(f"Сброс AI для user_id={user_id}. {personal_ai_choice} недоступен для тарифа {user_tier_name}.")
+        await utils.set_user_ai_provider(user_id, None) 
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"⚠️ Ваша ранее выбранная модель ИИ (`{html.escape(personal_ai_choice)}`) более недоступна для вашего тарифа.\n"
+                f"Мы автоматически переключили вас на модель по умолчанию."
+            ),
+            parse_mode='HTML'
+        )
+        # [Dev-Ассистент]: Обновляем user_data после сброса, чтобы дальше код работал с актуальными данными.
+        user_data = await db.get_user_by_id(user_id)
 
+    # [Dev-Ассистент]: ШАГ 3: И только теперь мы ОКОНЧАТЕЛЬНО определяем модель для этого запроса.
+    # [Dev-Ассистент]: Если был сброс, здесь будет взята модель по умолчанию. Если не было - останется личный выбор.
+    ai_provider = await utils.get_user_ai_provider(user_data)
+
+    # --- Проверка Персонажа ---
+    # [Dev-Ассистент]: Логика для персонажа изначально была правильной, но для консистентности
+    # [Dev-Ассистент]: добавим обновление user_data после сброса и здесь.
+    char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
+    if char_name in ALL_PROMPTS and char_name != DEFAULT_CHARACTER_NAME:
+        # ... (код получения char_info и required_tier_level без изменений) ...
+        char_info = ALL_PROMPTS[char_name]
+        required_tier_name = char_info.get('required_tier', TIER_FREE)
+        required_tier_level = utils.TIER_HIERARCHY.get(required_tier_name, 0)
+        
+        if user_tier_level < required_tier_level:
+            logger.warning(f"Сброс персонажа для user_id={user_id}. {char_name} недоступен для тарифа {user_tier_name}.")
+            await db.set_current_character(user_id, DEFAULT_CHARACTER_NAME)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"⚠️ Ваш ранее выбранный персонаж «{html.escape(char_name)}» более недоступен для вашего тарифа.\n"
+                    f"Мы автоматически переключили вас на «{DEFAULT_CHARACTER_NAME}»."
+                ),
+                parse_mode='HTML'
+            )
+            char_name = DEFAULT_CHARACTER_NAME
+            # [Dev-Ассистент]: Обновляем user_data на всякий случай
+            user_data = await db.get_user_by_id(user_id)
+    
+    # --- Конец блока проверки ---
+
+    # [Dev-Ассистент]: !!! ЕДИНСТВЕННЫЙ, ПРАВИЛЬНЫЙ БЛОК ОПРЕДЕЛЕНИЯ ПАРАМЕТРОВ !!!
+    output_format = user_data.get('output_format', OUTPUT_FORMAT_TEXT)
     system_instruction = "Ты — полезный ассистент."
     custom_char = await db.get_custom_character_by_name(user_id, char_name)
     if custom_char:
@@ -110,7 +165,6 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     chat_history = history_from_db + context.chat_data.get('history', [])
     context.chat_data.pop('history', None)
 
-    # [Dev-Ассистент]: Запускаем индикатор "печатает..."
     indicator_task = asyncio.create_task(
         _keep_typing_indicator_alive(context.bot, chat_id)
     )
@@ -240,7 +294,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                     _keep_indicator_alive(context.bot, update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
                 )
                 
-                caps = get_ai_client_with_caps(GPT_4_1_NANO, system_instruction="You are an image generation assistant.")
+                caps = get_ai_client_with_caps(GPT_1, system_instruction="You are an image generation assistant.")
                 # [Dev-Ассистент]: Отправляем в API ОЧИЩЕННЫЙ текст
                 image_url, error_message = await caps.client.generate_image(clean_prompt_text)
 
@@ -255,10 +309,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                         reply_markup=reply_markup
                     )
                     context.user_data['state'] = STATE_NONE
-                # ...
+                else:
+                    await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
 
             elif image_gen_provider == IMAGE_GEN_YANDEXART:
-                # ...
+                if len(original_prompt_text) > config.YANDEXART_PROMPT_LIMIT:
+                    cancel_button = InlineKeyboardButton("❌ Отмена", callback_data="image_gen_cancel")
+                    await update.message.reply_text(
+                        f"😔 Ваш запрос для YandexArt слишком длинный.\nМаксимум: {config.YANDEXART_PROMPT_LIMIT} символов. У вас: {len(original_prompt_text)}.",
+                        reply_markup=InlineKeyboardMarkup([[cancel_button]])
+                    )
+                    return
+
+                await update.message.reply_text("🎨 Принято! Отправляю запрос в YandexArt, это может занять до 2 минут...")
+                
+                # [Dev-Ассистент]: Запускаем нашего "помощника" и здесь
                 indicator_task = asyncio.create_task(
                     _keep_indicator_alive(context.bot, update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
                 )

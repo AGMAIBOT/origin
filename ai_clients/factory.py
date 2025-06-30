@@ -40,11 +40,11 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
             file_char_limit=config.FILE_PROCESSING_LIMITS.get(provider_identifier, 0)
         )
 
-    # --- Маршрутизация к OpenAI GPT-o4-mini ---
-    elif provider_identifier == GPT_O4_MINI:
+    # --- Маршрутизация к OpenAI GPT_2 ---
+    elif provider_identifier == GPT_2:
         if not OPENAI_API_KEY: raise ValueError("API ключ для OpenAI не найден.")
         # [Dev-Ассистент]: Мы создаем тот же GPTClient, но передаем ему новое имя модели из конфига.
-        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name=config.GPT_4O_MINI_MODEL)
+        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name=config.GPT_2_MODEL)
         return AIClientCapabilities(
             client=client,
             supports_vision=True, # [Dev-Ассистент]: gpt-4o-mini тоже поддерживает vision.
@@ -81,11 +81,11 @@ def get_ai_client_with_caps(provider_identifier: str, system_instruction: str) -
             file_char_limit=config.FILE_PROCESSING_LIMITS.get(provider_identifier, 0)
         )
 
-    # --- Маршрутизация к OpenAI GPT ---
-    elif provider_identifier == GPT_4_1_NANO:
+    # --- Маршрутизация к OpenAI GPT_1 ---
+    elif provider_identifier == GPT_1:
         if not OPENAI_API_KEY: raise ValueError("API ключ для OpenAI не найден.")
         # <<< ИСПРАВЛЕНИЕ: Убраны кавычки, теперь это ссылка на переменную из config >>>
-        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name=config.GPT_4_1_NANO_MODEL)
+        client = GPTClient(api_key=OPENAI_API_KEY, system_instruction=system_instruction, model_name=config.GPT_1_MODEL)
         return AIClientCapabilities(
             client=client,
             supports_vision=True, # <-- Меняем False на True

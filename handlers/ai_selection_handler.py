@@ -9,7 +9,7 @@ import database as db
 import config
 from utils import get_actual_user_tier, get_user_ai_provider
 from constants import (
-    TIER_PRO, GEMINI_STANDARD, OPENROUTER_DEEPSEEK, GPT_4_1_NANO, GPT_O4_MINI,
+    TIER_PRO, GEMINI_STANDARD, OPENROUTER_DEEPSEEK, GPT_1, GPT_2,
     OPENROUTER_GEMINI_2_FLASH, STATE_WAITING_FOR_IMAGE_PROMPT, STATE_NONE,
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, CURRENT_IMAGE_GEN_PROVIDER_KEY,
     LAST_IMAGE_PROMPT_KEY, TIER_PRO, TIER_LITE
@@ -169,7 +169,7 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
             # ... (остальная логика DALL-E)
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
             try:
-                caps = get_ai_client_with_caps(GPT_4_1_NANO, system_instruction="You are an image generation assistant.")
+                caps = get_ai_client_with_caps(GPT_1, system_instruction="You are an image generation assistant.")
                 image_url, error_message = await caps.client.generate_image(prompt_text)
                 if error_message: await query.message.reply_text(f"😔 Ошибка при перерисовке: {error_message}")
                 elif image_url: await query.message.reply_photo(photo=image_url, caption=caption_text, parse_mode='HTML', reply_markup=reply_markup)

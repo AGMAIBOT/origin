@@ -17,6 +17,8 @@ import database as db
 from constants import TIER_FREE, OUTPUT_FORMAT_TEXT, OUTPUT_FORMAT_TXT, OUTPUT_FORMAT_PDF
 logger = logging.getLogger(__name__)
 
+# [Dev-Ассистент]: Это позволит нам легко сравнивать, "выше" или "ниже" тариф пользователя.
+TIER_HIERARCHY = {constants.TIER_FREE: 0, constants.TIER_LITE: 1, constants.TIER_PRO: 2}
 
 # --- БЛОК ОБРАБОТКИ ТЕКСТА ---
 
@@ -30,6 +32,7 @@ def markdown_to_html(text: str) -> str:
     processed_text = re.sub(r'```(.*?)```', r'<pre>\1</pre>', processed_text, flags=re.DOTALL)
     
     # Заголовки (все уровни превращаются в жирный текст)
+    processed_text = re.sub(r'^\s*#### (.*?)\s*$', r'<b>\1</b>', processed_text, flags=re.MULTILINE)
     processed_text = re.sub(r'^\s*### (.*?)\s*$', r'<b>\1</b>', processed_text, flags=re.MULTILINE)
     processed_text = re.sub(r'^\s*## (.*?)\s*$', r'<b>\1</b>', processed_text, flags=re.MULTILINE)
     processed_text = re.sub(r'^\s*# (.*?)\s*$', r'<b>\1</b>', processed_text, flags=re.MULTILINE)
@@ -145,9 +148,9 @@ async def delete_message_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def send_long_message(
-    update: Update, 
+    update: Update,
     context: ContextTypes.DEFAULT_TYPE,
-    text: str, 
+    text: str,
     reply_markup: InlineKeyboardMarkup = None,
     output_format: str = OUTPUT_FORMAT_TEXT
 ):
@@ -160,12 +163,37 @@ async def send_long_message(
         if len(text) <= max_length:
             await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode='HTML')
         else:
-            parts = [text[i:i + max_length] for i in range(0, len(text), max_length)]
+            # [Dev-Ассистент]: !!! РЕШЕНИЕ: "УМНЫЕ НОЖНИЦЫ" !!!
+            # [Dev-Ассистент]: Вместо простого разделения, мы будем аккуратно
+            # [Dev-Ассистент]: резать текст по последнему переносу строки,
+            # [Dev-Ассистент]: чтобы не сломать HTML-теги.
+            parts = []
+            remaining_text = text
+            while len(remaining_text) > max_length:
+                # Находим точку разреза, не превышая лимит
+                cut_at = remaining_text.rfind('\n', 0, max_length)
+                # Если перенос строки не найден (очень длинная строка без \n),
+                # режем по лимиту, чтобы избежать бесконечного цикла.
+                if cut_at == -1:
+                    cut_at = max_length
+                
+                parts.append(remaining_text[:cut_at])
+                remaining_text = remaining_text[cut_at:].lstrip() # Удаляем лишние пробелы в начале следующей части
+
+            # Добавляем оставшийся "хвост"
+            if remaining_text:
+                parts.append(remaining_text)
+
             for i, part in enumerate(parts):
+                # Клавиатуру прикрепляем только к последнему сообщению
                 current_reply_markup = reply_markup if i == len(parts) - 1 else None
-                await context.bot.send_message(chat_id=chat_id, text=part, reply_markup=current_reply_markup, parse_mode='HTML')
+                if part: # Отправляем, только если часть не пустая
+                    await context.bot.send_message(
+                        chat_id=chat_id, text=part, reply_markup=current_reply_markup, parse_mode='HTML'
+                    )
 
     elif output_format == OUTPUT_FORMAT_TXT:
+        # ... (этот блок без изменений)
         try:
             clean_text = strip_html_tags(text)
             text_bytes = clean_text.encode('utf-8')
@@ -178,6 +206,7 @@ async def send_long_message(
             await context.bot.send_message(chat_id=chat_id, text="Не удалось сформировать .txt файл.")
 
     elif output_format == OUTPUT_FORMAT_PDF:
+        # ... (этот блок без изменений)
         try:
             loop = asyncio.get_running_loop()
             pdf_bytes = await loop.run_in_executor(None, create_pdf_from_html, text)
@@ -189,7 +218,6 @@ async def send_long_message(
         except Exception as e:
             logger.error(f"Ошибка при создании .pdf файла: {e}", exc_info=True)
             await context.bot.send_message(chat_id=chat_id, text="Не удалось сформировать .pdf файл.")
-
 
 async def get_actual_user_tier(user_data: dict) -> str:
     current_tier = user_data.get('subscription_tier', TIER_FREE)
@@ -287,6 +315,14 @@ async def get_user_ai_provider(user_data: dict) -> str:
     # Приоритет №3: Абсолютный "спасательный круг"
     logger.warning(
         f"Не удалось определить провайдера для тарифа '{user_tier}'. "
-        f"Используется глобальный запасной вариант: {constants.GEMINI_STANDARD}"
+        f"Используется глобальный запасной вариант: {constants.GPT_1}"
     )
-    return constants.GEMINI_STANDARD
+    return constants.GPT_1
+
+async def set_user_ai_provider(user_id: int, provider_name: str | None) -> None:
+    """
+    [Dev-Ассистент]: Устанавливает или сбрасывает выбранный AI-провайдер для пользователя.
+    [Dev-Ассистент]: Если provider_name равен None, сбрасывает на NULL в БД.
+    """
+    await db.db_request("UPDATE users SET current_ai_provider = ? WHERE id = ?", (provider_name, user_id))
+    logger.info(f"Для пользователя user_id={user_id} установлен AI-провайдер: {provider_name or 'по умолчанию'}")

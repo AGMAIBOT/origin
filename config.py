@@ -1,27 +1,27 @@
 # ПАГИНАЦИЯ, РЕФЛЕКТОРИНГ
 
 from constants import (
-    GEMINI_STANDARD, GPT_4_1_NANO, GPT_O4_MINI, 
+    GEMINI_STANDARD, GPT_1, GPT_2,
     OPENROUTER_DEEPSEEK, OPENROUTER_GEMINI_2_FLASH
 )
 
 # --- Настройки AI моделей ---
 GEMINI_MODEL = "gemini-1.5-flash-latest"
 DEEPSEEK_CHAT_MODEL = "deepseek/deepseek-r1-0528:free"
-GPT_4_1_NANO_MODEL = "gpt-4.1-nano"
+GPT_1_MODEL = "gpt-4.1-nano"
+GPT_2_MODEL = "o4-mini-2025-04-16"
 GPT_3_5_TURBO_MODEL = "gpt-3.5-turbo"
 GEMINI_2_FLASH_EXP_MODEL = "google/gemini-2.0-flash-exp:free"
-GPT_4O_MINI_MODEL = "o4-mini-2025-04-16"
 
 
 # [Dev-Ассистент]: ШАГ 1: Мастер-список всех моделей для "витрины" меню.
 ALL_TEXT_MODELS_FOR_SELECTION = [
     {
-        "provider_id": GPT_O4_MINI, 
+        "provider_id": GPT_2, 
         "display_name": "GPT-o4-mini (умный, vision)"
     },
     {
-        "provider_id": GPT_4_1_NANO, 
+        "provider_id": GPT_1, 
         "display_name": "GPT-4.1-nano (быстрый, vision)"
     },
     #{
@@ -43,31 +43,31 @@ ALL_TEXT_MODELS_FOR_SELECTION = [
 SUBSCRIPTION_TIERS = {
     'free': {
         "name": "Бесплатный",
-        "daily_limit": 40,
-        "ai_provider": GPT_4_1_NANO,  # Модель по умолчанию для новых пользователей этого тарифа
+        "daily_limit": 50,
+        "ai_provider": OPENROUTER_DEEPSEEK,  # Модель по умолчанию для новых пользователей этого тарифа
         "available_providers": [      # Список доступных для выбора моделей
-            GPT_4_1_NANO,
+         OPENROUTER_DEEPSEEK
         ],
         "can_use_vision": True,
     },
     'lite': {
         "name": "Lite",
         "daily_limit": 200,
-        "ai_provider": GPT_4_1_NANO, # Модель по умолчанию
+        "ai_provider": GPT_1, # Модель по умолчанию
         "available_providers": [
-            GPT_O4_MINI,
-            GPT_4_1_NANO,
-            GEMINI_STANDARD
+            GPT_2,
+            GPT_1,
+            OPENROUTER_DEEPSEEK
         ],
         "can_use_vision": True,
     },
     'pro': {
         "name": "Pro",
         "daily_limit": None,
-        "ai_provider": GPT_4_1_NANO, # Модель по умолчанию
+        "ai_provider": GPT_1, # Модель по умолчанию
         "available_providers": [      # Pro-пользователям доступны все модели из мастер-списка
-            GPT_O4_MINI,
-            GPT_4_1_NANO,
+            GPT_2,
+            GPT_1,
             OPENROUTER_DEEPSEEK,
         ],
         "can_use_vision": True,
@@ -99,8 +99,8 @@ FILE_PROCESSING_LIMITS = {
     
     # Для GPT-4o ставим более консервативный лимит, чтобы избежать ошибок
     # и больших затрат. 25000 символов ~ 6-8 тыс. токенов.
-    GPT_O4_MINI: 25000,
-    GPT_4_1_NANO: 25000,
+    GPT_2: 25000,
+    GPT_1: 25000,
     OPENROUTER_DEEPSEEK: 15000,
     OPENROUTER_GEMINI_2_FLASH: 30000,
 }
