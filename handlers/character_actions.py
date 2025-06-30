@@ -14,6 +14,8 @@ import config
 from constants import *
 from utils import delete_message_callback, get_text_content_from_document
 from . import character_menus
+from .character_menus import TIER_HIERARCHY
+from utils import get_actual_user_tier
 
 logger = logging.getLogger(__name__)
 
@@ -24,26 +26,45 @@ async def get_user_id(update: Update) -> int:
 
 async def show_character_card(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix: str):
     query = update.callback_query
-    await query.answer()
-
+    
     is_custom = prefix == "show_custom_char_"
-    char_id = None
-    char_name = ""
-    description = ""
-
+    
+    # [Dev-Ассистент]: Для кастомных персонажей логика остается прежней - доступ всегда есть.
     if is_custom:
+        await query.answer()
         char_id = int(query.data.replace(prefix, ""))
         char_data = await db.get_character_by_id(char_id)
         if not char_data: return await query.edit_message_text("Ошибка: персонаж не найден.")
         char_name = char_data['name']
         description = char_data['prompt']
+    
+    # [Dev-Ассистент]: А для стандартных персонажей добавляем проверку
     else:
         char_name = query.data.replace(prefix, "")
         char_info = ALL_PROMPTS.get(char_name)
-        if not char_info: return await query.edit_message_text("Ошибка: персонаж не найден.")
+        if not char_info: 
+            await query.answer()
+            return await query.edit_message_text("Ошибка: персонаж не найден.")
+
+        # [Dev-Ассистент]: !!! НОВАЯ ЛОГИКА ПРОВЕРКИ !!!
+        user_id = await get_user_id(update)
+        user_data = await db.get_user_by_id(user_id)
+        user_tier_name = await get_actual_user_tier(user_data)
+        user_tier_level = TIER_HIERARCHY.get(user_tier_name, 0)
+        
+        required_tier_name = char_info.get('required_tier', TIER_FREE)
+        required_tier_level = TIER_HIERARCHY.get(required_tier_name, 0)
+        
+        # Если доступ закрыт, показываем уведомление и выходим
+        if user_tier_level < required_tier_level:
+            await query.answer(f"🔒 Этот персонаж доступен с тарифа '{required_tier_name.capitalize()}'.", show_alert=True)
+            return
+        
+        # Если доступ есть, продолжаем как обычно
+        await query.answer()
         description = char_info.get('description', 'Описание для этого персонажа не задано.')
 
-    # [Dev-Ассистент]: Собираем текст для карточки с HTML-разметкой
+    # [Dev-Ассистент]: Этот блок кода теперь выполняется только если доступ разрешен
     safe_name = html.escape(char_name)
     safe_description = html.escape(description)
     text = f"🎭 <b>{safe_name}</b>\n\n{safe_description}"

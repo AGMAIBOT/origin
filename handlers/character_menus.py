@@ -9,9 +9,11 @@ from telegram.ext import ContextTypes
 from io import BytesIO
 import database as db
 import config
-from characters import DEFAULT_CHARACTER_NAME, CHARACTER_CATEGORIES
+from characters import DEFAULT_CHARACTER_NAME, CHARACTER_CATEGORIES, ALL_PROMPTS
 from constants import *
+from utils import get_actual_user_tier
 
+TIER_HIERARCHY = {TIER_FREE: 0, TIER_LITE: 1, TIER_PRO: 2}
 # ... (словари CATEGORY_DESCRIPTIONS и CATEGORY_DISPLAY_NAMES без изменений) ...
 CATEGORY_DESCRIPTIONS = {
     "conversational": "А иногда ведь просто хочется поболтать по душам, без всяких там задач и серьезных решений, правда? Здесь тебя ждут персонажи, которые умеют слушать, слышать между строк и даже делиться своим настроением. Забудь про сухие факты – это те, кто готов просто быть рядом и разделить с тобой момент.",
@@ -26,6 +28,7 @@ CATEGORY_DISPLAY_NAMES = {
 raw_text = "Добро пожаловать в уголок, где алгоритмы обретают... ну, почти душу! В разделе 'Персонажи' ты найдешь не просто наборы кода, а настоящих экспертов, готовых разрулить любую твою проблему; душевных собеседников, которые всегда поддержат разговор; и, конечно, харизматичных Мастеров квестов, что затянут тебя в эпические приключения. Выбери того, кто тебе по вкусу – и пусть начнется магия общения (или выживания)!"
 
 
+
 def clear_temp_state(context: ContextTypes.DEFAULT_TYPE):
     context.user_data['state'] = STATE_NONE
     context.user_data.pop(TEMP_CHAR_ID, None)
@@ -38,23 +41,45 @@ async def get_user_id(update: Update) -> int:
 async def _build_standard_character_keyboard(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
     user = await db.get_user_by_id(user_id)
     current_char_name = user['current_character_name'] if user else DEFAULT_CHARACTER_NAME
+    
+    # [Dev-Ассистент]: Получаем тариф пользователя и его "уровень"
+    user_tier_name = await get_actual_user_tier(user)
+    user_tier_level = TIER_HIERARCHY.get(user_tier_name, 0)
+
     current_category = context.user_data.get(CURRENT_CHAR_CATEGORY_KEY, "conversational")
     all_character_names = sorted(CHARACTER_CATEGORIES.get(current_category, []))
+    
     current_page = context.user_data.get(CURRENT_CHAR_VIEW_PAGE_KEY, 0)
     total_pages = (len(all_character_names) + config.CHARACTERS_PER_PAGE - 1) // config.CHARACTERS_PER_PAGE
     start_index = current_page * config.CHARACTERS_PER_PAGE
     end_index = start_index + config.CHARACTERS_PER_PAGE
     characters_on_page = all_character_names[start_index:end_index]
+
     keyboard = []
     for i in range(0, len(characters_on_page), 2):
         row = []
         for j in range(2):
             if i + j < len(characters_on_page):
                 char_name = characters_on_page[i+j]
-                # [Dev-Ассистент]: Используем html.escape для имен персонажей
-                display_name = f"✅ {html.escape(char_name)}" if char_name == current_char_name else html.escape(char_name)
+                char_info = ALL_PROMPTS.get(char_name, {})
+                
+                # [Dev-Ассистент]: !!! НОВАЯ ЛОГИКА С ЗАМОЧКАМИ !!!
+                prefix = ""
+                # 1. Получаем требуемый уровень для персонажа
+                required_tier_name = char_info.get('required_tier', TIER_FREE)
+                required_tier_level = TIER_HIERARCHY.get(required_tier_name, 0)
+                
+                # 2. Сравниваем уровни
+                if user_tier_level < required_tier_level:
+                    prefix = "🔒 "
+                # 3. Если доступ есть, проверяем, не активен ли он уже
+                elif char_name == current_char_name:
+                    prefix = "✅ "
+                
+                display_name = f"{prefix}{html.escape(char_name)}"
                 row.append(InlineKeyboardButton(display_name, callback_data=f"show_char_{char_name}"))
         keyboard.append(row)
+
     pagination_row = []
     if current_page > 0: pagination_row.append(InlineKeyboardButton("⬅️", callback_data="prev_char_page"))
     if total_pages > 1: pagination_row.append(InlineKeyboardButton(f"{current_page + 1}/{total_pages}", callback_data="current_page_info"))

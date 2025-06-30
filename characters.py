@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 import yaml
 logger = logging.getLogger(__name__)
+from constants import TIER_FREE
 
 # Персонаж по умолчанию
 DEFAULT_CHARACTER_NAME = "Базовый AI"
@@ -43,11 +44,11 @@ def load_prompts_from_files() -> tuple[dict, dict]:
                         # [Dev-Ассистент]: в файле отсутствует description или prompt.
                         all_prompts[character_name] = {
                             'description': data.get('description', 'Описание для этого персонажа не задано.'),
-                            'prompt': data.get('prompt', 'Системный промпт для этого персонажа не задан.')
+                            'prompt': data.get('prompt', 'Системный промпт для этого персонажа не задан.'),
+                            'required_tier': data.get('required_tier', TIER_FREE) # <<< [Dev-Ассистент]: НОВАЯ СТРОКА
                         }
                         character_categories[category_name].append(character_name)
-                        # [Dev-Ассистент]: Обновляем лог, т.к. загружаем теперь не просто промпт, а целого персонажа
-                        logger.info(f"Загружен персонаж '{character_name}' из категории '{category_name}'")
+                        logger.info(f"Загружен персонаж '{character_name}' из категории '{category_name}' (Тариф: {all_prompts[character_name]['required_tier']})") # [Dev-Ассистент]: Улучшенный лог
                     else:
                         logger.warning(f"Файл промпта {prompt_file} пуст или имеет неверный формат.")
 
