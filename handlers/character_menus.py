@@ -5,7 +5,6 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
-# [Dev-Ассистент]: escape_markdown больше не нужен
 from io import BytesIO
 import database as db
 import config
@@ -14,19 +13,21 @@ from constants import *
 from utils import get_actual_user_tier
 
 TIER_HIERARCHY = {TIER_FREE: 0, TIER_LITE: 1, TIER_PRO: 2}
-# ... (словари CATEGORY_DESCRIPTIONS и CATEGORY_DISPLAY_NAMES без изменений) ...
+
+# [Dev-Ассистент]: ОБНОВЛЕННЫЕ СЛОВАРИ ДЛЯ НОВОЙ КАТЕГОРИИ "AGM Учителя"
 CATEGORY_DESCRIPTIONS = {
     "conversational": "А иногда ведь просто хочется поболтать по душам, без всяких там задач и серьезных решений, правда? Здесь тебя ждут персонажи, которые умеют слушать, слышать между строк и даже делиться своим настроением. Забудь про сухие факты – это те, кто готов просто быть рядом и разделить с тобой момент.\n",
     "specialists": "Нужен дельный совет или помощь в сложной ситуации? В этом разделе собрались настоящие мастера своего дела! От технического гуру до знатока растений – каждый из них готов поделиться глубокими знаниями, дать практичные советы и помочь разобраться в любом вопросе. Они здесь, чтобы решать твои проблемы, а не просто слушать!",
     "quest": "Надоело просто читать? Здесь ты – главный герой! Погружайся в захватывающие интерактивные миры, где каждый твой выбор реально меняет сюжет и ведет к одной из уникальных концовок. От пиратских приключений до борьбы за выживание — готовься, скучно точно не будет!",
+    "teachers": "🎓 В этом разделе тебя ждут мудрые наставники, готовые помочь освоить новые знания и навыки. От математики до программирования, от истории до искусства — здесь каждый найдет своего идеального преподавателя, способного объяснить сложные концепции простым языком и провести тебя через процесс обучения с удовольствием." # <<< [Dev-Ассистент]: НОВАЯ КАТЕГОРИЯ
 }
 CATEGORY_DISPLAY_NAMES = {
     "conversational": "Разговорные",
     "specialists": "Специалисты",
-    "quest": "Ролевые игры (Quest)"
+    "quest": "Ролевые игры (Quest)",
+    "teachers": "🎓 AGM Учителя" # <<< [Dev-Ассистент]: НОВАЯ КАТЕГОРИЯ
 }
 raw_text = "Добро пожаловать в уголок, где алгоритмы обретают... ну, почти душу! В разделе 'Персонажи' ты найдешь не просто наборы кода, а настоящих экспертов, готовых разрулить любую твою проблему; душевных собеседников, которые всегда поддержат разговор; и, конечно, харизматичных Мастеров квестов, что затянут тебя в эпические приключения. Выбери того, кто тебе по вкусу – и пусть начнется магия общения (или выживания)!"
-
 
 
 def clear_temp_state(context: ContextTypes.DEFAULT_TYPE):
@@ -42,7 +43,6 @@ async def _build_standard_character_keyboard(user_id: int, context: ContextTypes
     user = await db.get_user_by_id(user_id)
     current_char_name = user['current_character_name'] if user else DEFAULT_CHARACTER_NAME
     
-    # [Dev-Ассистент]: Получаем тариф пользователя и его "уровень"
     user_tier_name = await get_actual_user_tier(user)
     user_tier_level = TIER_HIERARCHY.get(user_tier_name, 0)
 
@@ -63,16 +63,12 @@ async def _build_standard_character_keyboard(user_id: int, context: ContextTypes
                 char_name = characters_on_page[i+j]
                 char_info = ALL_PROMPTS.get(char_name, {})
                 
-                # [Dev-Ассистент]: !!! НОВАЯ ЛОГИКА С ЗАМОЧКАМИ !!!
                 prefix = ""
-                # 1. Получаем требуемый уровень для персонажа
                 required_tier_name = char_info.get('required_tier', TIER_FREE)
                 required_tier_level = TIER_HIERARCHY.get(required_tier_name, 0)
                 
-                # 2. Сравниваем уровни
                 if user_tier_level < required_tier_level:
                     prefix = "🔒 "
-                # 3. Если доступ есть, проверяем, не активен ли он уже
                 elif char_name == current_char_name:
                     prefix = "✅ "
                 
@@ -109,7 +105,6 @@ async def _build_paginated_custom_char_keyboard(user_id: int, custom_chars: list
         for j in range(2):
             if i + j < len(characters_on_page):
                 char = characters_on_page[i+j]
-                # [Dev-Ассистент]: Используем html.escape для имен персонажей
                 display_name = f"{icon}{html.escape(char['name'])}"
                 if mode == 'view' and char['name'] == current_char_name: display_name = f"✅ {display_name}"
                 row.append(InlineKeyboardButton(display_name, callback_data=f"{callback_prefix}{char['id']}"))
@@ -130,12 +125,14 @@ async def _build_paginated_custom_char_keyboard(user_id: int, custom_chars: list
     return InlineKeyboardMarkup(keyboard)
 
 async def show_character_categories_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # [Dev-Ассистент]: Используем HTML для простого выделения жирным.
     text = f"{html.escape(raw_text)}"
-    keyboard = [[InlineKeyboardButton("🗣️ Разговорные", callback_data="category_conversational")],
-                [InlineKeyboardButton("🎓 Специалисты", callback_data="category_specialists")],
-                [InlineKeyboardButton("⚔️ Ролевые игры (Quest)", callback_data="category_quest")],
-                [InlineKeyboardButton("🎭 Мои Персонажи", callback_data="my_custom_characters_hub")],]
+    keyboard = [
+        [InlineKeyboardButton("🗣️ Разговорные", callback_data="category_conversational")],
+        [InlineKeyboardButton("🎓 Специалисты", callback_data="category_specialists")],
+        [InlineKeyboardButton("⚔️ Ролевые игры (Quest)", callback_data="category_quest")],
+        [InlineKeyboardButton("🎓 AGM Учителя", callback_data="category_teachers")], # <<< [Dev-Ассистент]: НОВАЯ КНОПКА
+        [InlineKeyboardButton("🎭 Мои Персонажи", callback_data="my_custom_characters_hub")]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
     else: await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
@@ -154,7 +151,6 @@ async def show_standard_characters_menu(update: Update, context: ContextTypes.DE
     category_description = CATEGORY_DESCRIPTIONS.get(category_name, "Выберите персонажа из этой категории:")
     display_category_name = CATEGORY_DISPLAY_NAMES.get(category_name, category_name.capitalize())
 
-    # [Dev-Ассистент]: Переходим на HTML. Используем html.escape для безопасности.
     text = (
         f"Категория: <b>{html.escape(display_category_name)}</b>\n"
         f"{html.escape(category_description)}\n"

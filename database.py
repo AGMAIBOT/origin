@@ -1,4 +1,4 @@
-# database.py (ИСПРАВЛЕННАЯ ВЕРСИЯ С ДОБАВЛЕННОЙ ТАБЛИЦЕЙ chat_history)
+# database.py (ОБНОВЛЕННАЯ ВЕРСИЯ - ДОБАВЛЕН referred_by_user_id)
 
 import sqlite3
 import logging
@@ -20,7 +20,6 @@ def _init_db():
             cur = con.cursor()
             cur.execute("PRAGMA foreign_keys = ON")
             
-            # [Dev-Ассистент]: Добавляем столбец 'balance' в таблицу users
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
@@ -36,27 +35,28 @@ def _init_db():
                     is_verified BOOLEAN NOT NULL DEFAULT 0,
                     subscription_expiry_date DATETIME,
                     output_format TEXT DEFAULT 'text' NOT NULL,
-                    balance INTEGER DEFAULT 0 NOT NULL -- <<< [Dev-Ассистент]: НОВЫЙ СТОЛБЕЦ
+                    balance INTEGER DEFAULT 0 NOT NULL,
+                    referred_by_user_id INTEGER DEFAULT NULL, -- <<< [Dev-Ассистент]: НОВЫЙ СТОЛБЕЦ
+                    FOREIGN KEY (referred_by_user_id) REFERENCES users (id) ON DELETE SET NULL -- <<< [Dev-Ассистент]: СВЯЗЬ
                 )
             """)
+            # [Dev-Ассистент]: Добавляем индекс для быстрого поиска рефералов
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users (referred_by_user_id);")
 
-            # [Dev-Ассистент]: Создаем новую таблицу 'transactions'
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS transactions (
                     id INTEGER PRIMARY KEY,
                     user_id INTEGER NOT NULL,
-                    amount INTEGER NOT NULL, -- Количество AGMcoin (может быть отрицательным для списаний)
-                    type TEXT NOT NULL,     -- Тип транзакции (topup, request_cost, referral_bonus, purchase)
-                    description TEXT,       -- Описание транзакции (например, ID платежа)
+                    amount INTEGER NOT NULL,
+                    type TEXT NOT NULL,
+                    description TEXT,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    -- [Dev-Ассистент]: Эти поля полезны для аудита и миграции на PostgreSQL
-                    external_id TEXT,       -- ID из внешней платежной системы
-                    balance_before INTEGER, -- Баланс до транзакции
-                    balance_after INTEGER,  -- Баланс после транзакции
+                    external_id TEXT,
+                    balance_before INTEGER,
+                    balance_after INTEGER,
                     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
                 )
             """)
-            # [Dev-Ассистент]: Индекс для более быстрого поиска транзакций по пользователю
             cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions (user_id);")
 
             cur.execute("""
@@ -71,7 +71,6 @@ def _init_db():
                 )
             """)
 
-            # [Dev-Ассистент]: ВОТ ЭТОТ БЛОК БЫЛ ПРОПУЩЕН, ТЕПЕРЬ ОН ЗДЕСЬ!
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS chat_history (
                     id INTEGER PRIMARY KEY,
@@ -83,11 +82,10 @@ def _init_db():
                     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
                 )
             """)
-            # [Dev-Ассистент]: Индекс для chat_history (теперь после создания самой таблицы)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user_char ON chat_history (user_id, character_name);")
 
             con.commit()
-            logger.info("База данных успешно инициализирована (Архитектура: Подписки, Кошелек).")
+            logger.info("База данных успешно инициализирована (Архитектура: Подписки, Кошелек, Рефералы).")
     except sqlite3.Error as e:
         logger.error(f"Ошибка при инициализации базы данных SQLite: {e}", exc_info=True)
         raise
@@ -98,7 +96,6 @@ async def db_request(
     fetch_one: bool = False, 
     fetch_all: bool = False
 ) -> any:
-    # ... (эта функция без изменений) ...
     """
     Выполняет асинхронный запрос к базе данных SQLite с использованием aiosqlite
     и ГАРАНТИРОВАННО СОХРАНЯЕТ ИЗМЕНЕНИЯ перед возвратом результата.
@@ -135,28 +132,48 @@ async def db_request(
 def _get_default_ai_provider_for_tier(tier_name: str) -> str:
     """Возвращает AI-провайдера по умолчанию для указанного тарифного плана."""
     tier_config = config.SUBSCRIPTION_TIERS.get(tier_name, config.SUBSCRIPTION_TIERS[constants.TIER_FREE])
-    return tier_config.get('ai_provider', constants.GPT_1) # Дефолт на случай, если в конфиге нет ai_provider
+    return tier_config.get('ai_provider', constants.GPT_1)
 
 # --- Пользователи ---
-async def add_or_update_user(telegram_id: int, full_name: str, username: Optional[str]) -> Optional[int]:
-    existing_user = await db_request("SELECT id, subscription_tier, current_ai_provider FROM users WHERE telegram_id = ?", (telegram_id,), fetch_one=True)
+# [Dev-Ассистент]: Обновили add_or_update_user, чтобы он принимал referer_id
+async def add_or_update_user(telegram_id: int, full_name: str, username: Optional[str], referer_id: Optional[int] = None) -> Optional[int]:
+    existing_user = await db_request("SELECT id, subscription_tier, current_ai_provider, referred_by_user_id FROM users WHERE telegram_id = ?", (telegram_id,), fetch_one=True)
     
     if existing_user:
-        query = "UPDATE users SET full_name = ?, username = ? WHERE telegram_id = ? RETURNING id"
-        result = await db_request(query, (full_name, username, telegram_id), fetch_one=True)
+        # [Dev-Ассистент]: Если пользователь существует, обновляем его имя и юзернейм.
+        # [Dev-Ассистент]: И если referer_id передан и в БД его еще нет, записываем.
+        update_params = [full_name, username, telegram_id]
+        update_query = "UPDATE users SET full_name = ?, username = ?"
+        
+        if referer_id is not None and existing_user.get('referred_by_user_id') is None:
+            update_query += ", referred_by_user_id = ?"
+            update_params.insert(0, referer_id) # Добавляем referer_id в начало, чтобы он соответствовал ?
+            # Переставляем telegram_id в конец
+            update_params = update_params[1:] + [update_params[0]] 
+            logger.info(f"Обновлен пользователь telegram_id={telegram_id}: добавлен реферер user_id={referer_id}.")
+
+        update_query += " WHERE telegram_id = ? RETURNING id"
+        result = await db_request(update_query, tuple(update_params), fetch_one=True)
         return result['id'] if result else None
     else:
+        # [Dev-Ассистент]: Если пользователь новый, создаем его с реферером (если есть)
         default_tier = constants.TIER_FREE
         default_ai_provider = _get_default_ai_provider_for_tier(default_tier)
         
-        query = "INSERT INTO users (telegram_id, full_name, username, subscription_tier, current_ai_provider, balance) VALUES (?, ?, ?, ?, ?, ?) RETURNING id"
-        result = await db_request(query, (telegram_id, full_name, username, default_tier, default_ai_provider, 0), fetch_one=True)
-        logger.info(f"Создан новый пользователь telegram_id={telegram_id} с тарифом '{default_tier}', AI '{default_ai_provider}', баланс: 0.")
+        query = "INSERT INTO users (telegram_id, full_name, username, subscription_tier, current_ai_provider, balance, referred_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id"
+        result = await db_request(query, (telegram_id, full_name, username, default_tier, default_ai_provider, 0, referer_id), fetch_one=True)
+        logger.info(f"Создан новый пользователь telegram_id={telegram_id} с тарифом '{default_tier}', AI '{default_ai_provider}', баланс: 0, реферер: {referer_id or 'None'}.")
         return result['id'] if result else None
 
 
 async def get_user_by_id(user_id: int) -> Optional[Dict]:
     return await db_request("SELECT * FROM users WHERE id = ?", (user_id,), fetch_one=True)
+
+# [Dev-Ассистент]: НОВАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: получить реферера пользователя
+async def get_referrer_for_user(user_id: int) -> Optional[Dict]:
+    """Возвращает данные реферера для указанного пользователя."""
+    query = "SELECT U2.* FROM users AS U1 JOIN users AS U2 ON U1.referred_by_user_id = U2.id WHERE U1.id = ?"
+    return await db_request(query, (user_id,), fetch_one=True)
 
 async def get_and_update_user_usage(user_id: int, daily_limit: int) -> Dict:
     today_str = date.today().isoformat()
@@ -204,7 +221,7 @@ async def add_transaction(
     Добавляет запись о финансовой транзакции в базу данных.
     :param user_id: ID пользователя.
     :param amount: Изменение баланса (может быть отрицательным для списаний).
-    :param transaction_type: Тип транзакции (topup, request_cost, referral_bonus, purchase).
+    :param transaction_type: Тип транзакции (topup, request_cost, referral_bonus, purchase, referral_commission).
     :param description: Описание.
     :param external_id: Внешний ID (например, ID платежа).
     :param balance_before: Баланс пользователя до транзакции (для аудита).
@@ -222,6 +239,7 @@ async def add_transaction(
     )
     return result['id'] if result else None
 
+# [Dev-Ассистент]: НОВАЯ ФУНКЦИЯ: Обновление баланса пользователя (с записью транзакции и реферальным бонусом)
 async def update_user_balance(
     user_id: int, 
     amount_change: int, 
@@ -231,6 +249,7 @@ async def update_user_balance(
 ) -> bool:
     """
     Изменяет баланс пользователя и записывает транзакцию.
+    Если transaction_type - 'topup', проверяет наличие реферера и начисляет ему процент.
     :param user_id: ID пользователя.
     :param amount_change: Сумма изменения баланса (положительная для пополнения, отрицательная для списания).
     :param transaction_type: Тип транзакции.
@@ -246,9 +265,11 @@ async def update_user_balance(
     old_balance = user.get('balance', 0)
     new_balance = old_balance + amount_change
 
+    # Обновляем баланс в таблице users
     update_query = "UPDATE users SET balance = ? WHERE id = ?"
     await db_request(update_query, (new_balance, user_id))
 
+    # Добавляем запись о транзакции
     await add_transaction(
         user_id, 
         amount_change, 
@@ -259,8 +280,40 @@ async def update_user_balance(
         new_balance
     )
     logger.info(f"Баланс user_id={user_id} изменен на {amount_change}. Новый баланс: {new_balance}.")
+
+    # [Dev-Ассистент]: ЛОГИКА РЕФЕРАЛЬНОГО ПРОЦЕНТА
+    if transaction_type == constants.TRANSACTION_TYPE_TOPUP and amount_change > 0:
+        referrer = await get_referrer_for_user(user_id)
+        if referrer:
+            referrer_user_id = referrer['id']
+            commission_amount = int(amount_change * config.REFERRAL_PERCENTAGE / 100) # Процент от пополнения
+            if commission_amount > 0:
+                logger.info(f"Начисление реферальной комиссии: {commission_amount} AGMcoin рефереру {referrer_user_id} от пополнения {user_id}.")
+                # Начисляем комиссию рефереру
+                await update_user_balance(
+                    referrer_user_id, 
+                    commission_amount, 
+                    constants.TRANSACTION_TYPE_REFERRAL_COMMISSION,
+                    f"Реферальная комиссия от пополнения пользователя {user.get('username', user.get('telegram_id'))} ({amount_change} AGMcoin)"
+                )
+
     return True
 
+# [Dev-Ассистент]: НОВАЯ ФУНКЦИЯ: Получить рефералов пользователя
+async def get_user_referrals(user_id: int) -> List[Dict]:
+    """Возвращает список пользователей, приглашенных данным реферером."""
+    query = "SELECT id, telegram_id, username, full_name, created_at FROM users WHERE referred_by_user_id = ?"
+    return await db_request(query, (user_id,), fetch_all=True)
+
+# [Dev-Ассистент]: НОВАЯ ФУНКЦИЯ: Получить суммарный реферальный доход пользователя
+async def get_user_referral_earnings(user_id: int) -> int:
+    """Возвращает общую сумму AGMcoin, заработанную по реферальной программе."""
+    query = "SELECT SUM(amount) FROM transactions WHERE user_id = ? AND type = ?"
+    result = await db_request(query, (user_id, constants.TRANSACTION_TYPE_REFERRAL_COMMISSION), fetch_one=True)
+    return result['SUM(amount)'] if result and result['SUM(amount)'] is not None else 0
+
+
+# --- Персонажи и История (остались без изменений) ---
 async def add_character(user_id: int, name: str, prompt: str) -> Optional[int]:
     return await db_request("INSERT INTO characters (user_id, name, prompt) VALUES (?, ?, ?)", (user_id, name, prompt))
 async def get_user_characters(user_id: int) -> List[Dict]:

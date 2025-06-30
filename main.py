@@ -1,3 +1,4 @@
+# main.py (ОБНОВЛЕННАЯ ВЕРСИЯ - С ОБРАБОТКОЙ РЕФЕРАЛЬНОЙ ССЫЛКИ И ТЕСТОМ ПОПОЛНЕНИЯ)
 
 import os
 import logging
@@ -5,7 +6,6 @@ import asyncio
 from dotenv import load_dotenv
 from typing import List
 
-# [Dev-Ассистент]: Импортируем CancelledError для правильной обработки остановки фоновых задач
 from asyncio import CancelledError
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -33,11 +33,13 @@ from telegram.constants import ChatAction
 import database as db
 import config
 import html
+import constants
 from constants import (
     STATE_NONE, STATE_WAITING_FOR_IMAGE_PROMPT, TIER_LITE, TIER_PRO, 
     TIER_FREE, GPT_1, CURRENT_IMAGE_GEN_PROVIDER_KEY, 
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, GEMINI_STANDARD, 
-    LAST_IMAGE_PROMPT_KEY, LAST_RESPONSE_KEY, OUTPUT_FORMAT_TEXT
+    LAST_IMAGE_PROMPT_KEY, LAST_RESPONSE_KEY, OUTPUT_FORMAT_TEXT,
+    TRANSACTION_TYPE_TOPUP # [Dev-Ассистент]: Добавил импорт для использования в тестовой команде
 )
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler, onboarding_handler, post_processing_handler
@@ -50,9 +52,6 @@ from ai_clients.yandexart_client import YandexArtClient
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 
-# [Dev-Ассистент]: НАША НОВАЯ ФОНОВАЯ ЗАДАЧА-"ПОМОЩНИК".
-# [Dev-Ассистент]: В цикле отправляет указанное действие (action) каждые 4 секунды,
-# [Dev-Ассистент]: чтобы индикатор в чате не пропадал.
 async def _keep_indicator_alive(bot: Bot, chat_id: int, action: str):
     try:
         while True:
@@ -64,10 +63,8 @@ async def _keep_indicator_alive(bot: Bot, chat_id: int, action: str):
     except Exception as e:
         logger.warning(f"Ошибка в задаче индикатора для чата {chat_id}: {e}")
 
-# [Dev-Ассистент]: Мы будем использовать эту же функцию для текстовых запросов,
-# [Dev-Ассистент]: поэтому она переименована и сделана более универсальной.
+
 async def _keep_typing_indicator_alive(bot: Bot, chat_id: int):
-    # [Dev-Ассистент]: Вызываем нашу новую универсальную функцию с нужным действием.
     await _keep_indicator_alive(bot, chat_id, ChatAction.TYPING)
 
 
@@ -75,18 +72,22 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     user_id = user_data['id']
     chat_id = update.effective_chat.id
     
-    # [Dev-Ассистент]: ШАГ 1.5: ПРИНУДИТЕЛЬНАЯ ПРОВЕРКА И СБРОС НАСТРОЕК
+    # [Dev-Ассистент]: Логирование для отладки, если понадобится.
+    # logger.info(f"[{user_id}] --- Начало process_ai_request ---")
+    # logger.info(f"[{user_id}] user_data['current_ai_provider'] (до всех проверок): {user_data.get('current_ai_provider')}")
+    # logger.info(f"[{user_id}] user_data['subscription_tier'] (до всех проверок): {user_data.get('subscription_tier')}")
+
     user_tier_name = await utils.get_actual_user_tier(user_data)
     user_tier_level = utils.TIER_HIERARCHY.get(user_tier_name, 0)
     
-    # --- Проверка AI Провайдера ---
-    # [Dev-Ассистент]: !!! РЕШЕНИЕ !!!
-    # [Dev-Ассистент]: ШАГ 1: Сначала мы смотрим ТОЛЬКО на то, что у пользователя сохранено в БД.
+    # logger.info(f"[{user_id}] user_tier_name (после get_actual_user_tier): {user_tier_name}")
+
     personal_ai_choice = user_data.get('current_ai_provider')
     available_providers = config.SUBSCRIPTION_TIERS[user_tier_name]['available_providers']
     
-    # [Dev-Ассистент]: ШАГ 2: Мы запускаем проверку и сброс ТОЛЬКО ЕСЛИ у пользователя был личный выбор,
-    # [Dev-Ассистент]: и этот выбор стал недоступен.
+    # logger.info(f"[{user_id}] personal_ai_choice (из user_data): {personal_ai_choice}")
+    # logger.info(f"[{user_id}] available_providers (из config для '{user_tier_name}'): {available_providers}")
+
     if personal_ai_choice and personal_ai_choice not in available_providers:
         logger.warning(f"Сброс AI для user_id={user_id}. {personal_ai_choice} недоступен для тарифа {user_tier_name}.")
         await utils.set_user_ai_provider(user_id, None) 
@@ -98,19 +99,31 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
             ),
             parse_mode='HTML'
         )
-        # [Dev-Ассистент]: Обновляем user_data после сброса, чтобы дальше код работал с актуальными данными.
         user_data = await db.get_user_by_id(user_id)
 
-    # [Dev-Ассистент]: ШАГ 3: И только теперь мы ОКОНЧАТЕЛЬНО определяем модель для этого запроса.
-    # [Dev-Ассистент]: Если был сброс, здесь будет взята модель по умолчанию. Если не было - останется личный выбор.
     ai_provider = await utils.get_user_ai_provider(user_data)
+    
+    # logger.info(f"[{user_id}] ai_provider (итоговый, после всех проверок): {ai_provider}")
 
-    # --- Проверка Персонажа ---
-    # [Dev-Ассистент]: Логика для персонажа изначально была правильной, но для консистентности
-    # [Dev-Ассистент]: добавим обновление user_data после сброса и здесь.
     char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
-    if char_name in ALL_PROMPTS and char_name != DEFAULT_CHARACTER_NAME:
-        # ... (код получения char_info и required_tier_level без изменений) ...
+    # [Dev-Ассистент]: Добавляем проверку, что персонаж существует в ALL_PROMPTS
+    # [Dev-Ассистент]: Это обработает случай, если 'Помощник' или другой несуществующий персонаж в БД
+    if char_name not in ALL_PROMPTS and await db.get_custom_character_by_name(user_id, char_name) is None:
+        logger.warning(f"Персонаж '{char_name}' не найден среди стандартных или кастомных для user_id={user_id}. Сброс на '{DEFAULT_CHARACTER_NAME}'.")
+        await db.set_current_character(user_id, DEFAULT_CHARACTER_NAME)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"⚠️ Ваш ранее выбранный персонаж «{html.escape(char_name)}» более не существует или недоступен.\n"
+                f"Мы автоматически переключили вас на «{DEFAULT_CHARACTER_NAME}»."
+            ),
+            parse_mode='HTML'
+        )
+        char_name = DEFAULT_CHARACTER_NAME
+        user_data = await db.get_user_by_id(user_id) # Обновляем user_data после сброса
+        
+    # [Dev-Ассистент]: Существующая проверка доступности по тарифу
+    elif char_name in ALL_PROMPTS and char_name != DEFAULT_CHARACTER_NAME:
         char_info = ALL_PROMPTS[char_name]
         required_tier_name = char_info.get('required_tier', TIER_FREE)
         required_tier_level = utils.TIER_HIERARCHY.get(required_tier_name, 0)
@@ -127,12 +140,8 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 parse_mode='HTML'
             )
             char_name = DEFAULT_CHARACTER_NAME
-            # [Dev-Ассистент]: Обновляем user_data на всякий случай
             user_data = await db.get_user_by_id(user_id)
     
-    # --- Конец блока проверки ---
-
-    # [Dev-Ассистент]: !!! ЕДИНСТВЕННЫЙ, ПРАВИЛЬНЫЙ БЛОК ОПРЕДЕЛЕНИЯ ПАРАМЕТРОВ !!!
     output_format = user_data.get('output_format', OUTPUT_FORMAT_TEXT)
     system_instruction = "Ты — полезный ассистент."
     custom_char = await db.get_custom_character_by_name(user_id, char_name)
@@ -210,9 +219,34 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
             )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (код без изменений)
     user = update.effective_user
-    await db.add_or_update_user(user.id, user.full_name, user.username)
+    
+    # [Dev-Ассистент]: Обработка реферальной ссылки
+    referrer_id = None
+    if context.args and len(context.args) > 0:
+        start_parameter = context.args[0]
+        if start_parameter.startswith("ref_"):
+            try:
+                # Извлекаем Telegram ID реферера из ссылки
+                potential_referrer_telegram_id = int(start_parameter.replace("ref_", ""))
+                # Проверяем, что реферер существует в нашей БД и не является самим приглашаемым
+                if potential_referrer_telegram_id != user.id:
+                    referrer_db_user = await db.get_user_by_telegram_id(potential_referrer_telegram_id)
+                    if referrer_db_user:
+                        referrer_id = referrer_db_user['id'] # Используем внутренний ID реферера
+                        logger.info(f"Обнаружена реферальная ссылка: пользователь {user.id} приглашен реферером (DB ID: {referrer_id}).")
+                    else:
+                        logger.warning(f"Не найден реферер с telegram_id={potential_referrer_telegram_id} для пользователя {user.id}.")
+                else:
+                    logger.warning(f"Пользователь {user.id} попытался пригласить сам себя.")
+            except ValueError:
+                logger.warning(f"Некорректный формат реферальной ссылки: {start_parameter}")
+
+    # [Dev-Ассистент]: Передаем referrer_id в add_or_update_user
+    # [Dev-Ассистент]: Если пользователь новый, referer_id будет записан сразу.
+    # [Dev-Ассистент]: Если существующий, referer_id будет записан только если он еще не задан.
+    await db.add_or_update_user(user.id, user.full_name, user.username, referer_id=referrer_id)
+    
     user_data = await db.get_user_by_telegram_id(user.id)
     if not user_data or not user_data.get('is_verified'):
         await captcha_handler.send_captcha(update, context)
@@ -225,7 +259,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @require_verification
 @inject_user_data
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
-    # ... (код без изменений)
     char_name_to_reset = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
     display_name = char_name_to_reset
     await db.clear_chat_history(user_data['id'], char_name_to_reset)
@@ -234,22 +267,35 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user
 
 @require_verification
 async def set_subscription_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (код без изменений)
     if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("У вас нет прав для выполнения этой команды.")
         return
     try:
         if len(context.args) != 3: raise ValueError("Неверное количество аргументов.")
         target_user_id_str, tier, days_str = context.args
-        target_user_id = int(target_user_id_str)
+        target_user_id_telegram = int(target_user_id_str) # Telegram ID
         days = int(days_str)
+
         if tier not in [TIER_LITE, TIER_PRO, TIER_FREE]:
+            # [Dev-Ассистент]: Добавляем возможность пополнения баланса для теста реферальной комиссии
+            if tier == 'topup_test': # Используем 'topup_test' как специальный параметр для пополнения
+                amount = int(days_str) # В этом случае days_str будет суммой пополнения
+                user_to_topup = await db.get_user_by_telegram_id(target_user_id_telegram)
+                if user_to_topup:
+                    await db.update_user_balance(user_to_topup['id'], amount, constants.TRANSACTION_TYPE_TOPUP, f"Тестовое пополнение через /setsub")
+                    await update.message.reply_text(f"Баланс пользователя telegram_id={target_user_id_telegram} пополнен на {amount} AGMcoin (тест).")
+                else:
+                    await update.message.reply_text(f"Пользователь telegram_id={target_user_id_telegram} не найден для пополнения.")
+                return # Выходим после обработки тестового пополнения
+            
             await update.message.reply_text(f"Неверный уровень: используйте '{TIER_LITE}', '{TIER_PRO}' или '{TIER_FREE}'")
             return
-        await db.set_user_subscription(target_user_id, tier, days)
-        await update.message.reply_text(f"Пользователю telegram_id={target_user_id} установлена подписка '{tier}' на {days} дней.")
+        
+        await db.set_user_subscription(target_user_id_telegram, tier, days)
+        await update.message.reply_text(f"Пользователю telegram_id={target_user_id_telegram} установлена подписка '{tier}' на {days} дней.")
     except Exception as e:
-        await update.message.reply_text(f"Ошибка. Использование: /setsub <telegram_id> <tier> <days>\nПример: /setsub 12345 lite 30\nДетали: {e}")
+        logger.error(f"Ошибка в /setsub: {e}", exc_info=True)
+        await update.message.reply_text(f"Ошибка. Использование: /setsub <telegram_id> <tier> <days>\nПример: /setsub 12345 lite 30\nИли для теста пополнения: /setsub 12345 topup_test 100\nДетали: {e}")
 
 @require_verification
 async def show_wip_notice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -261,20 +307,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
     current_state = context.user_data.get('state', STATE_NONE)
 
     if current_state == STATE_WAITING_FOR_IMAGE_PROMPT:
-        # [Dev-Ассистент]: Мы по-прежнему сохраняем оригинальный текст,
-        # [Dev-Ассистент]: чтобы показать его пользователю в подписи к фото.
         original_prompt_text = update.message.text
         if not original_prompt_text:
             await update.message.reply_text("Пожалуйста, отправьте текстовое описание для картинки.")
             return
 
-        # [Dev-Ассистент]: !!! РЕШЕНИЕ !!!
-        # [Dev-Ассистент]: Вызываем нашу новую функцию из utils для "очистки" промпта.
-        # [Dev-Ассистент]: Именно эту чистую версию мы будем отправлять в API.
         clean_prompt_text = utils.strip_markdown_for_prompt(original_prompt_text)
 
         image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
-        # [Dev-Ассистент]: Сохраняем в историю оригинальный текст, а не очищенный
         context.user_data[LAST_IMAGE_PROMPT_KEY] = original_prompt_text
         
         keyboard = [
@@ -295,13 +335,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                 )
                 
                 caps = get_ai_client_with_caps(GPT_1, system_instruction="You are an image generation assistant.")
-                # [Dev-Ассистент]: Отправляем в API ОЧИЩЕННЫЙ текст
                 image_url, error_message = await caps.client.generate_image(clean_prompt_text)
 
                 if error_message:
                     await update.message.reply_text(f"😔 Ошибка: {error_message}")
                 elif image_url:
-                    # [Dev-Ассистент]: А в подписи показываем ОРИГИНАЛЬНЫЙ текст
                     await update.message.reply_photo(
                         photo=image_url, 
                         caption=f"✨ Ваше изображение по запросу:\n\n`{original_prompt_text}`", 
@@ -322,7 +360,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                     return
                 await update.message.reply_text("🎨 Принято! Отправляю запрос в YandexArt, это может занять до 2 минут...")
                 
-                # [Dev-Ассистент]: Запускаем нашего "помощника" и здесь
                 indicator_task = asyncio.create_task(
                     _keep_indicator_alive(context.bot, update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
                 )
@@ -331,13 +368,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                     folder_id=os.getenv("YANDEX_FOLDER_ID"),
                     api_key=os.getenv("YANDEX_API_KEY")
                 )
-                # [Dev-Ассистент]: Отправляем в API ОЧИЩЕННЫЙ текст и здесь
                 image_bytes, error_message = await yandex_client.generate_image(clean_prompt_text)
 
                 if error_message:
                     await update.message.reply_text(f"😔 Ошибка: {error_message}")
                 elif image_bytes:
-                     # [Dev-Ассистент]: И здесь в подписи показываем ОРИГИНАЛЬНЫЙ текст
                     await update.message.reply_photo(
                         photo=image_bytes, 
                         caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{original_prompt_text}`", 
@@ -357,13 +392,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
             await update.message.reply_text(f"Произошла критическая ошибка: {e}")
 
         finally:
-            # [Dev-Ассистент]: Гарантированно останавливаем "помощника"
             if indicator_task:
                 indicator_task.cancel()
                 try:
                     await indicator_task
                 except CancelledError:
-                    pass # Это ожидаемое и нормальное завершение, игнорируем.
+                    pass
         
         return
     
@@ -401,7 +435,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
 @require_verification
 @inject_user_data
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
-    # ... (код без изменений)
     tier_params = config.SUBSCRIPTION_TIERS[await get_actual_user_tier(user_data)]
     if tier_params['daily_limit'] is not None:
         usage = await db.get_and_update_user_usage(user_data['id'], tier_params['daily_limit'])
@@ -440,7 +473,6 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (код без изменений)
     if await post_processing_handler.handle_post_processing_callback(update, context): return
     if await captcha_handler.handle_captcha_callback(update, context): return
     if await ai_selection_handler.handle_ai_selection_callback(update, context): return
