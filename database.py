@@ -1,4 +1,4 @@
-# database.py
+# database.py (ИСПРАВЛЕННАЯ ВЕРСИЯ С ДОБАВЛЕННОЙ ТАБЛИЦЕЙ chat_history)
 
 import sqlite3
 import logging
@@ -13,13 +13,14 @@ DB_FILE = os.path.join('data', 'gemini_bot.db')
 import config
 import constants
 
-# Функция _init_db остается без изменений
 def _init_db():
     os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
     try:
         with sqlite3.connect(DB_FILE) as con:
             cur = con.cursor()
             cur.execute("PRAGMA foreign_keys = ON")
+            
+            # [Dev-Ассистент]: Добавляем столбец 'balance' в таблицу users
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
@@ -27,16 +28,37 @@ def _init_db():
                     full_name TEXT,
                     username TEXT,
                     current_character_name TEXT DEFAULT 'Базовый AI',
-                    current_ai_provider TEXT, -- <<< [Dev-Ассистент]: Теперь может быть не NULL
+                    current_ai_provider TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     daily_requests_count INTEGER DEFAULT 0,
                     last_request_date TEXT,
                     subscription_tier TEXT DEFAULT 'free' NOT NULL,
                     is_verified BOOLEAN NOT NULL DEFAULT 0,
                     subscription_expiry_date DATETIME,
-                    output_format TEXT DEFAULT 'text' NOT NULL
+                    output_format TEXT DEFAULT 'text' NOT NULL,
+                    balance INTEGER DEFAULT 0 NOT NULL -- <<< [Dev-Ассистент]: НОВЫЙ СТОЛБЕЦ
                 )
             """)
+
+            # [Dev-Ассистент]: Создаем новую таблицу 'transactions'
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    amount INTEGER NOT NULL, -- Количество AGMcoin (может быть отрицательным для списаний)
+                    type TEXT NOT NULL,     -- Тип транзакции (topup, request_cost, referral_bonus, purchase)
+                    description TEXT,       -- Описание транзакции (например, ID платежа)
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    -- [Dev-Ассистент]: Эти поля полезны для аудита и миграции на PostgreSQL
+                    external_id TEXT,       -- ID из внешней платежной системы
+                    balance_before INTEGER, -- Баланс до транзакции
+                    balance_after INTEGER,  -- Баланс после транзакции
+                    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+                )
+            """)
+            # [Dev-Ассистент]: Индекс для более быстрого поиска транзакций по пользователю
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions (user_id);")
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS characters (
                     id INTEGER PRIMARY KEY,
@@ -48,6 +70,8 @@ def _init_db():
                     UNIQUE (user_id, name)
                 )
             """)
+
+            # [Dev-Ассистент]: ВОТ ЭТОТ БЛОК БЫЛ ПРОПУЩЕН, ТЕПЕРЬ ОН ЗДЕСЬ!
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS chat_history (
                     id INTEGER PRIMARY KEY,
@@ -59,9 +83,11 @@ def _init_db():
                     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
                 )
             """)
+            # [Dev-Ассистент]: Индекс для chat_history (теперь после создания самой таблицы)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user_char ON chat_history (user_id, character_name);")
+
             con.commit()
-            logger.info("База данных успешно инициализирована (Архитектура: Подписки).")
+            logger.info("База данных успешно инициализирована (Архитектура: Подписки, Кошелек).")
     except sqlite3.Error as e:
         logger.error(f"Ошибка при инициализации базы данных SQLite: {e}", exc_info=True)
         raise
@@ -106,9 +132,6 @@ async def db_request(
             await con.rollback()
         return None
 
-# --- Вспомогательная функция для определения дефолтной модели ---
-# [Dev-Ассистент]: Эту функцию мы добавим в database.py,
-# [Dev-Ассистент]: чтобы она могла использоваться как при создании пользователя, так и при смене тарифа.
 def _get_default_ai_provider_for_tier(tier_name: str) -> str:
     """Возвращает AI-провайдера по умолчанию для указанного тарифного плана."""
     tier_config = config.SUBSCRIPTION_TIERS.get(tier_name, config.SUBSCRIPTION_TIERS[constants.TIER_FREE])
@@ -116,23 +139,19 @@ def _get_default_ai_provider_for_tier(tier_name: str) -> str:
 
 # --- Пользователи ---
 async def add_or_update_user(telegram_id: int, full_name: str, username: Optional[str]) -> Optional[int]:
-    # [Dev-Ассистент]: Шаг 1: Проверяем, существует ли пользователь.
     existing_user = await db_request("SELECT id, subscription_tier, current_ai_provider FROM users WHERE telegram_id = ?", (telegram_id,), fetch_one=True)
     
     if existing_user:
-        # [Dev-Ассистент]: Если пользователь существует, просто обновляем его имя и юзернейм.
         query = "UPDATE users SET full_name = ?, username = ? WHERE telegram_id = ? RETURNING id"
         result = await db_request(query, (full_name, username, telegram_id), fetch_one=True)
         return result['id'] if result else None
     else:
-        # [Dev-Ассистент]: Если пользователь новый, определяем его начальный тариф (free)
-        # [Dev-Ассистент]: и устанавливаем дефолтную модель для этого тарифа.
         default_tier = constants.TIER_FREE
         default_ai_provider = _get_default_ai_provider_for_tier(default_tier)
         
-        query = "INSERT INTO users (telegram_id, full_name, username, subscription_tier, current_ai_provider) VALUES (?, ?, ?, ?, ?) RETURNING id"
-        result = await db_request(query, (telegram_id, full_name, username, default_tier, default_ai_provider), fetch_one=True)
-        logger.info(f"Создан новый пользователь telegram_id={telegram_id} с тарифом '{default_tier}' и AI '{default_ai_provider}'.")
+        query = "INSERT INTO users (telegram_id, full_name, username, subscription_tier, current_ai_provider, balance) VALUES (?, ?, ?, ?, ?, ?) RETURNING id"
+        result = await db_request(query, (telegram_id, full_name, username, default_tier, default_ai_provider, 0), fetch_one=True)
+        logger.info(f"Создан новый пользователь telegram_id={telegram_id} с тарифом '{default_tier}', AI '{default_ai_provider}', баланс: 0.")
         return result['id'] if result else None
 
 
@@ -160,22 +179,88 @@ async def set_user_subscription(telegram_id: int, tier: str, duration_days: int)
         expiry_date = datetime.now() + timedelta(days=duration_days)
     today_str = date.today().isoformat()
     
-    # [Dev-Ассистент]: Определяем новую дефолтную модель для этого тарифа
     new_default_ai_provider = _get_default_ai_provider_for_tier(tier)
     
-    # [Dev-Ассистент]: Обновляем и тариф, и модель AI, сбрасывая счетчик
     query = "UPDATE users SET subscription_tier = ?, subscription_expiry_date = ?, daily_requests_count = 0, last_request_date = ?, current_ai_provider = ? WHERE telegram_id = ?"
     await db_request(query, (tier, expiry_date, today_str, new_default_ai_provider, telegram_id))
     logger.info(f"Для пользователя telegram_id={telegram_id} установлен тариф '{tier}' до {expiry_date}, AI по умолчанию: '{new_default_ai_provider}'")
 
 async def set_user_tier_to_free(user_id: int):
-    # [Dev-Ассистент]: Когда подписка сбрасывается на free, также устанавливаем дефолтную AI модель для free.
     default_free_ai_provider = _get_default_ai_provider_for_tier(constants.TIER_FREE)
     query = "UPDATE users SET subscription_tier = 'free', subscription_expiry_date = NULL, current_ai_provider = ? WHERE id = ?"
     await db_request(query, (default_free_ai_provider, user_id,))
     logger.info(f"Подписка для user_id={user_id} сброшена до 'free'. AI установлен на '{default_free_ai_provider}'.")
 
-# --- Персонажи и История (без изменений) ---
+async def add_transaction(
+    user_id: int, 
+    amount: int, 
+    transaction_type: str, 
+    description: Optional[str] = None, 
+    external_id: Optional[str] = None,
+    balance_before: Optional[int] = None,
+    balance_after: Optional[int] = None
+) -> Optional[int]:
+    """
+    Добавляет запись о финансовой транзакции в базу данных.
+    :param user_id: ID пользователя.
+    :param amount: Изменение баланса (может быть отрицательным для списаний).
+    :param transaction_type: Тип транзакции (topup, request_cost, referral_bonus, purchase).
+    :param description: Описание.
+    :param external_id: Внешний ID (например, ID платежа).
+    :param balance_before: Баланс пользователя до транзакции (для аудита).
+    :param balance_after: Баланс пользователя после транзакции (для аудита).
+    :return: ID новой транзакции или None.
+    """
+    query = """
+        INSERT INTO transactions (user_id, amount, type, description, external_id, balance_before, balance_after)
+        VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
+    """
+    result = await db_request(
+        query, 
+        (user_id, amount, transaction_type, description, external_id, balance_before, balance_after), 
+        fetch_one=True
+    )
+    return result['id'] if result else None
+
+async def update_user_balance(
+    user_id: int, 
+    amount_change: int, 
+    transaction_type: str, 
+    description: Optional[str] = None, 
+    external_id: Optional[str] = None
+) -> bool:
+    """
+    Изменяет баланс пользователя и записывает транзакцию.
+    :param user_id: ID пользователя.
+    :param amount_change: Сумма изменения баланса (положительная для пополнения, отрицательная для списания).
+    :param transaction_type: Тип транзакции.
+    :param description: Описание.
+    :param external_id: Внешний ID (для платежных систем).
+    :return: True, если обновление успешно, False в противном случае.
+    """
+    user = await get_user_by_id(user_id)
+    if not user:
+        logger.error(f"Пользователь с ID {user_id} не найден для обновления баланса.")
+        return False
+
+    old_balance = user.get('balance', 0)
+    new_balance = old_balance + amount_change
+
+    update_query = "UPDATE users SET balance = ? WHERE id = ?"
+    await db_request(update_query, (new_balance, user_id))
+
+    await add_transaction(
+        user_id, 
+        amount_change, 
+        transaction_type, 
+        description, 
+        external_id,
+        old_balance,
+        new_balance
+    )
+    logger.info(f"Баланс user_id={user_id} изменен на {amount_change}. Новый баланс: {new_balance}.")
+    return True
+
 async def add_character(user_id: int, name: str, prompt: str) -> Optional[int]:
     return await db_request("INSERT INTO characters (user_id, name, prompt) VALUES (?, ?, ?)", (user_id, name, prompt))
 async def get_user_characters(user_id: int) -> List[Dict]:

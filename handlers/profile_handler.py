@@ -1,15 +1,13 @@
-# handlers/profile_handler.py (ФИНАЛЬНАЯ ВЕРСИЯ НА HTML)
+# handlers/profile_handler.py (ОБНОВЛЕННАЯ ВЕРСИЯ С КОШЕЛЬКОМ)
 
 import logging
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-# [Dev-Ассистент]: escape_markdown больше не нужен
 from telegram.error import BadRequest
-# [Dev-Ассистент]: Добавляем html для экранирования пользовательских данных
 import html
 import config
-from constants import *
+from constants import * # Важно, чтобы новые константы из constants.py были доступны
 from utils import get_actual_user_tier, require_verification
 import database as db
 
@@ -25,8 +23,6 @@ async def show_profile_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     current_tier_name = await get_actual_user_tier(user_data)
     tier_params = config.SUBSCRIPTION_TIERS[current_tier_name]
     
-    # [Dev-Ассистент]: Вместо escape_markdown используем html.escape для безопасности.
-    # [Dev-Ассистент]: Это защитит от "инъекции HTML-тегов", если в имени пользователя будет < или >.
     user_name = html.escape(user_data.get('full_name', 'N/A'))
     user_tg_id = user_data.get('telegram_id', 'N/A')
     tier_display_name = html.escape(tier_params['name'])
@@ -47,17 +43,22 @@ async def show_profile_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         expiry_date = datetime.fromisoformat(expiry_date_str) if isinstance(expiry_date_str, str) else expiry_date_str
         if expiry_date: expiry_info = f"🗓️ <b>Подписка активна до:</b> {expiry_date.strftime('%d.%m.%Y %H:%M')}\n"
     
-    # [Dev-Ассистент]: Вся разметка заменена на HTML теги
+    # [Dev-Ассистент]: Отображение баланса AGMcoin
+    user_balance = user_data.get('balance', 0)
+    balance_info = f"💰 <b>Баланс AGMcoin:</b> <code>{user_balance}</code>\n"
+
     text = (f"👤 <b>Ваш Профиль</b>\n\n"
             f"🏷️ <b>Имя:</b> {user_name}\n"
             f"🆔 <b>Telegram ID:</b> <code>{user_tg_id}</code>\n\n"
+            f"{balance_info}" # <<< [Dev-Ассистент]: Добавляем информацию о балансе
             f"⭐ <b>Тарифный план:</b> <i>{tier_display_name}</i>\n"
-            f"{expiry_info}\n{limit_info}"
-            f"<i>Счетчик сбрасывается ежедневно в 00:00 UTC</i>")
+            f"{expiry_info}\n"
+            f"{limit_info}"
+            f"<i>Счетчик запросов сбрасывается ежедневно в 00:00 UTC</i>")
 
     keyboard = [
         [
-            InlineKeyboardButton("👛 Кошелек (в разработке)", callback_data=PROFILE_HUB_WALLET),
+            InlineKeyboardButton("👛 Кошелек", callback_data=WALLET_HUB), # <<< [Dev-Ассистент]: Сделали кнопку рабочей
             InlineKeyboardButton("🛒 Магазин (в разработке)", callback_data=PROFILE_HUB_SHOP)
         ],
         [InlineKeyboardButton("🛠️ Настройки", callback_data=PROFILE_HUB_SETTINGS)],
@@ -67,13 +68,58 @@ async def show_profile_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if update.callback_query:
         try:
-            # [Dev-Ассистент]: Меняем parse_mode на HTML
             await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
         except BadRequest as e:
             if "Message is not modified" in str(e): await update.callback_query.answer()
             else: raise
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+# [Dev-Ассистент]: НОВАЯ ФУНКЦИЯ: Показать меню Кошелька
+async def show_wallet_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    user_id = await db.add_or_update_user(telegram_id=update.effective_user.id, full_name=update.effective_user.full_name, username=update.effective_user.username)
+    user_data = await db.get_user_by_id(user_id)
+    if not user_data:
+        await query.edit_message_text("Ошибка: не удалось загрузить данные пользователя.")
+        return
+    
+    user_balance = user_data.get('balance', 0)
+    
+    text = (
+        f"👛 <b>Ваш Кошелек</b>\n\n"
+        f"✨ <b>Баланс AGMcoin:</b> <code>{user_balance}</code>\n\n"
+        f"Используйте AGMcoin для оплаты дополнительных функций и повышения лимитов."
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("➕ Пополнить баланс", callback_data=WALLET_TOPUP_START)],
+        [InlineKeyboardButton("🤝 Реферальная программа", callback_data=WALLET_REFERRAL_PROGRAM)],
+        [InlineKeyboardButton("⬅️ Назад", callback_data=WALLET_BACK_TO_PROFILE)]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    except BadRequest as e:
+        if "Message is not modified" in str(e): await query.answer()
+        else: raise
+
+# [Dev-Ассистент]: НОВАЯ ФУНКЦИЯ: Заглушка для Пополнения
+async def handle_topup_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # [Dev-Ассистент]: Для тестирования можно раскомментировать эти строки для разового пополнения
+    # user_id = await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
+    # await db.update_user_balance(user_id, 100, TRANSACTION_TYPE_TOPUP, "Тестовое пополнение")
+    await update.callback_query.answer("Раздел пополнения в разработке. Скоро здесь появятся способы оплаты!", show_alert=True)
+    # [Dev-Ассистент]: Если раскомментируешь пополнение, можешь также раскомментировать следующую строку
+    # await show_wallet_menu(update, context) # Обновить меню после пополнения (чтобы увидеть измененный баланс)
+
+# [Dev-Ассистент]: НОВАЯ ФУНКЦИЯ: Заглушка для Реферальной программы
+async def handle_referral_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.callback_query.answer("Реферальная программа в разработке. Приглашайте друзей и получайте бонусы!", show_alert=True)
+
 
 async def show_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -98,7 +144,6 @@ async def show_format_selection_menu(update: Update, context: ContextTypes.DEFAU
 
     text = "📝 <b>Формат ответа</b>\n\nВыберите, в каком виде вы хотите получать ответы от AI:"
     
-    # [Dev-Ассистент]: Тексты кнопок теперь не требуют никакого экранирования!
     keyboard = [
         [InlineKeyboardButton(
             ("✅ " if current_format == OUTPUT_FORMAT_TEXT else "") + "Текст в чате", 
@@ -151,9 +196,15 @@ async def handle_profile_callbacks(update: Update, context: ContextTypes.DEFAULT
         FORMAT_SET_TEXT: set_output_format,
         FORMAT_SET_TXT: set_output_format,
         FORMAT_SET_PDF: set_output_format,
+        
+        # [Dev-Ассистент]: НОВЫЕ МАРШРУТЫ ДЛЯ КОШЕЛЬКА
+        WALLET_HUB: show_wallet_menu,
+        WALLET_TOPUP_START: handle_topup_start,
+        WALLET_REFERRAL_PROGRAM: handle_referral_program,
+        WALLET_BACK_TO_PROFILE: show_profile_hub, # Возвращаемся в главное меню профиля
     }
 
-    if query.data in [PROFILE_HUB_WALLET, PROFILE_HUB_SHOP]:
+    if query.data in [PROFILE_HUB_SHOP]:
         await query.answer("Этот раздел находится в разработке.", show_alert=True)
         return True
 

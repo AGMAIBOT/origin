@@ -52,6 +52,17 @@ PROFILE_HUB_SETTINGS = "profile_hub_settings"
 PROFILE_HUB_WALLET = "profile_hub_wallet"
 PROFILE_HUB_SHOP = "profile_hub_shop"
 
+WALLET_HUB = "wallet_hub" # Для перехода в само меню кошелька (после нажатия "Кошелек" из профиля)
+WALLET_TOPUP_START = "wallet_topup_start"
+WALLET_REFERRAL_PROGRAM = "wallet_referral_program"
+WALLET_BACK_TO_PROFILE = "wallet_back_to_profile"
+# [Dev-Ассистент]: НОВЫЕ КОНСТАНТЫ ДЛЯ ТИПОВ ТРАНЗАКЦИЙ (для БД)
+TRANSACTION_TYPE_TOPUP = "topup"
+TRANSACTION_TYPE_REQUEST_COST = "request_cost" # Для будущих списаний за запросы
+TRANSACTION_TYPE_REFERRAL_BONUS = "referral_bonus"
+TRANSACTION_TYPE_PURCHASE = "purchase" # Для будущих покупок
+TRANSACTION_TYPE_REFERRAL_COMMISSION = "referral_commission" # <<< [Dev-Ассистент]: НОВАЯ КОНСТАНТА
+
 # Кнопки в меню настроек
 SETTINGS_BACK_TO_PROFILE_HUB = "settings_back_to_profile_hub"
 SETTINGS_OUTPUT_FORMAT = "settings_output_format"
