@@ -1,32 +1,33 @@
-# database.py (Версия с aiosqlite)
+# database.py
 
-import sqlite3 # Оставляем для первоначальной проверки и типа ошибки
+import sqlite3
 import logging
 import os
-import aiosqlite # <<< ИЗМЕНЕНИЕ: Импортируем новую библиотеку
+import aiosqlite
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timedelta, date
 
 logger = logging.getLogger(__name__)
 DB_FILE = os.path.join('data', 'gemini_bot.db')
 
-# Функция _init_db остается без изменений, так как она вызывается один раз
-# синхронно при старте и это нормально.
+import config
+import constants
+
+# Функция _init_db остается без изменений
 def _init_db():
     os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
     try:
         with sqlite3.connect(DB_FILE) as con:
             cur = con.cursor()
             cur.execute("PRAGMA foreign_keys = ON")
-            # ... (весь остальной код создания таблиц не меняется) ...
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
                     telegram_id INTEGER UNIQUE NOT NULL,
                     full_name TEXT,
                     username TEXT,
-                    current_character_name TEXT DEFAULT 'Помощник',
-                    current_ai_provider TEXT,
+                    current_character_name TEXT DEFAULT 'Базовый AI',
+                    current_ai_provider TEXT, -- <<< [Dev-Ассистент]: Теперь может быть не NULL
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     daily_requests_count INTEGER DEFAULT 0,
                     last_request_date TEXT,
@@ -65,13 +66,13 @@ def _init_db():
         logger.error(f"Ошибка при инициализации базы данных SQLite: {e}", exc_info=True)
         raise
 
-# <<< ИЗМЕНЕНИЕ: Полностью переписанная асинхронная функция db_request >>>
 async def db_request(
     query: str, 
     params: tuple = (), 
     fetch_one: bool = False, 
     fetch_all: bool = False
 ) -> any:
+    # ... (эта функция без изменений) ...
     """
     Выполняет асинхронный запрос к базе данных SQLite с использованием aiosqlite
     и ГАРАНТИРОВАННО СОХРАНЯЕТ ИЗМЕНЕНИЯ перед возвратом результата.
@@ -85,43 +86,55 @@ async def db_request(
             async with con.cursor() as cur:
                 await cur.execute(query, params)
 
-                # [Dev-Ассистент]: ШАГ 1. Сначала получаем данные во временные переменные.
-                # [Dev-Ассистент]: Мы НЕ выходим из функции с помощью return.
                 result = None
                 if fetch_one:
                     row = await cur.fetchone()
                     result = dict(row) if row else None
-                elif fetch_all: # [Dev-Ассистент]: Важно использовать elif, т.к. эти режимы взаимоисключающие.
+                elif fetch_all:
                     rows = await cur.fetchall()
                     result = [dict(row) for row in rows]
                 else:
-                    # [Dev-Ассистент]: Для операций без fetch (просто UPDATE, DELETE)
-                    # [Dev-Ассистент]: или простого INSERT, мы будем использовать lastrowid.
                     result = cur.lastrowid
                 
-                # [Dev-Ассистент]: ШАГ 2. НАЖИМАЕМ КНОПКУ "СОХРАНИТЬ".
-                # [Dev-Ассистент]: Этот commit теперь выполняется ВСЕГДА после любого execute.
                 await con.commit()
                 
-                # [Dev-Ассистент]: ШАГ 3. И только ПОСЛЕ сохранения мы возвращаем результат.
                 return result
 
     except aiosqlite.Error as e:
         logger.error(f"Ошибка выполнения DB запроса: {query} с параметрами {params}. Ошибка: {e}", exc_info=True)
-        # [Dev-Ассистент]: Добавляем await con.rollback() в случае ошибки, чтобы откатить транзакцию.
         if 'con' in locals() and con.is_connected():
             await con.rollback()
         return None
 
-# --- ВАЖНО: Все остальные функции в файле (add_or_update_user, get_user_by_id и т.д.) ---
-# --- остаются АБСОЛЮТНО БЕЗ ИЗМЕНЕНИЙ! Они уже используют db_request и будут ---
-# --- автоматически работать с новой асинхронной версией. ---
+# --- Вспомогательная функция для определения дефолтной модели ---
+# [Dev-Ассистент]: Эту функцию мы добавим в database.py,
+# [Dev-Ассистент]: чтобы она могла использоваться как при создании пользователя, так и при смене тарифа.
+def _get_default_ai_provider_for_tier(tier_name: str) -> str:
+    """Возвращает AI-провайдера по умолчанию для указанного тарифного плана."""
+    tier_config = config.SUBSCRIPTION_TIERS.get(tier_name, config.SUBSCRIPTION_TIERS[constants.TIER_FREE])
+    return tier_config.get('ai_provider', constants.GPT_1) # Дефолт на случай, если в конфиге нет ai_provider
 
 # --- Пользователи ---
 async def add_or_update_user(telegram_id: int, full_name: str, username: Optional[str]) -> Optional[int]:
-    query = "INSERT INTO users (telegram_id, full_name, username) VALUES (?, ?, ?) ON CONFLICT(telegram_id) DO UPDATE SET full_name = excluded.full_name, username = excluded.username RETURNING id"
-    result = await db_request(query, (telegram_id, full_name, username), fetch_one=True)
-    return result['id'] if result else None
+    # [Dev-Ассистент]: Шаг 1: Проверяем, существует ли пользователь.
+    existing_user = await db_request("SELECT id, subscription_tier, current_ai_provider FROM users WHERE telegram_id = ?", (telegram_id,), fetch_one=True)
+    
+    if existing_user:
+        # [Dev-Ассистент]: Если пользователь существует, просто обновляем его имя и юзернейм.
+        query = "UPDATE users SET full_name = ?, username = ? WHERE telegram_id = ? RETURNING id"
+        result = await db_request(query, (full_name, username, telegram_id), fetch_one=True)
+        return result['id'] if result else None
+    else:
+        # [Dev-Ассистент]: Если пользователь новый, определяем его начальный тариф (free)
+        # [Dev-Ассистент]: и устанавливаем дефолтную модель для этого тарифа.
+        default_tier = constants.TIER_FREE
+        default_ai_provider = _get_default_ai_provider_for_tier(default_tier)
+        
+        query = "INSERT INTO users (telegram_id, full_name, username, subscription_tier, current_ai_provider) VALUES (?, ?, ?, ?, ?) RETURNING id"
+        result = await db_request(query, (telegram_id, full_name, username, default_tier, default_ai_provider), fetch_one=True)
+        logger.info(f"Создан новый пользователь telegram_id={telegram_id} с тарифом '{default_tier}' и AI '{default_ai_provider}'.")
+        return result['id'] if result else None
+
 
 async def get_user_by_id(user_id: int) -> Optional[Dict]:
     return await db_request("SELECT * FROM users WHERE id = ?", (user_id,), fetch_one=True)
@@ -146,14 +159,21 @@ async def set_user_subscription(telegram_id: int, tier: str, duration_days: int)
     if tier != 'free':
         expiry_date = datetime.now() + timedelta(days=duration_days)
     today_str = date.today().isoformat()
-    query = "UPDATE users SET subscription_tier = ?, subscription_expiry_date = ?, daily_requests_count = 0, last_request_date = ? WHERE telegram_id = ?"
-    await db_request(query, (tier, expiry_date, today_str, telegram_id))
-    logger.info(f"Для пользователя telegram_id={telegram_id} установлен тариф '{tier}' до {expiry_date}")
+    
+    # [Dev-Ассистент]: Определяем новую дефолтную модель для этого тарифа
+    new_default_ai_provider = _get_default_ai_provider_for_tier(tier)
+    
+    # [Dev-Ассистент]: Обновляем и тариф, и модель AI, сбрасывая счетчик
+    query = "UPDATE users SET subscription_tier = ?, subscription_expiry_date = ?, daily_requests_count = 0, last_request_date = ?, current_ai_provider = ? WHERE telegram_id = ?"
+    await db_request(query, (tier, expiry_date, today_str, new_default_ai_provider, telegram_id))
+    logger.info(f"Для пользователя telegram_id={telegram_id} установлен тариф '{tier}' до {expiry_date}, AI по умолчанию: '{new_default_ai_provider}'")
 
 async def set_user_tier_to_free(user_id: int):
-    query = "UPDATE users SET subscription_tier = 'free', subscription_expiry_date = NULL WHERE id = ?"
-    await db_request(query, (user_id,))
-    logger.info(f"Подписка для user_id={user_id} сброшена до 'free'.")
+    # [Dev-Ассистент]: Когда подписка сбрасывается на free, также устанавливаем дефолтную AI модель для free.
+    default_free_ai_provider = _get_default_ai_provider_for_tier(constants.TIER_FREE)
+    query = "UPDATE users SET subscription_tier = 'free', subscription_expiry_date = NULL, current_ai_provider = ? WHERE id = ?"
+    await db_request(query, (default_free_ai_provider, user_id,))
+    logger.info(f"Подписка для user_id={user_id} сброшена до 'free'. AI установлен на '{default_free_ai_provider}'.")
 
 # --- Персонажи и История (без изменений) ---
 async def add_character(user_id: int, name: str, prompt: str) -> Optional[int]:

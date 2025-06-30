@@ -320,7 +320,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
                         reply_markup=InlineKeyboardMarkup([[cancel_button]])
                     )
                     return
-
                 await update.message.reply_text("🎨 Принято! Отправляю запрос в YandexArt, это может занять до 2 минут...")
                 
                 # [Dev-Ассистент]: Запускаем нашего "помощника" и здесь

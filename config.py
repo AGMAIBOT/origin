@@ -4,10 +4,9 @@ from constants import (
     GEMINI_STANDARD, GPT_1, GPT_2,
     OPENROUTER_DEEPSEEK, OPENROUTER_GEMINI_2_FLASH
 )
-
 # --- Настройки AI моделей ---
 GEMINI_MODEL = "gemini-1.5-flash-latest"
-DEEPSEEK_CHAT_MODEL = "deepseek/deepseek-r1-0528:free"
+DEEPSEEK_CHAT_MODEL = "deepseek/deepseek-chat-v3-0324:free"
 GPT_1_MODEL = "gpt-4.1-nano"
 GPT_2_MODEL = "o4-mini-2025-04-16"
 GPT_3_5_TURBO_MODEL = "gpt-3.5-turbo"
@@ -44,9 +43,9 @@ SUBSCRIPTION_TIERS = {
     'free': {
         "name": "Бесплатный",
         "daily_limit": 50,
-        "ai_provider": OPENROUTER_DEEPSEEK,  # Модель по умолчанию для новых пользователей этого тарифа
+        "ai_provider": GPT_1,  # Модель по умолчанию для новых пользователей этого тарифа
         "available_providers": [      # Список доступных для выбора моделей
-         OPENROUTER_DEEPSEEK
+        GPT_1
         ],
         "can_use_vision": True,
     },
