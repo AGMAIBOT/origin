@@ -84,5 +84,12 @@ DALL_E_3_SIZE_1024X1792 = "1024x1792"
 DALL_E_3_SIZE_1792X1024 = "1792x1024"
 CURRENT_DALL_E_3_RESOLUTION_KEY = "current_dalle3_resolution" # Ключ для user_data
 
+# [Dev-Ассистент]: НОВЫЕ КОНСТАНТЫ ДЛЯ YANDEXART РАЗРЕШЕНИЙ И КЛЮЧЕЙ
+YANDEXART_SIZE_1024X1024 = "1024x1024"
+YANDEXART_SIZE_1024X1792 = "1024x1792" # 9:16
+YANDEXART_SIZE_1792X1024 = "1792x1024" # 16:9
+CURRENT_YANDEXART_RESOLUTION_KEY = "current_yandexart_resolution" # Ключ для user_data
+
 # [Dev-Ассистент]: НОВАЯ КОНСТАНТА ДЛЯ ТИПОВ ТРАНЗАКЦИЙ (для БД)
 TRANSACTION_TYPE_IMAGE_GEN_COST = "image_gen_cost"
+TRANSACTION_TYPE_YANDEXART_GEN_COST = "yandexart_gen_cost" # [Dev-Ассистент]: Новый тип транзакции для YandexArt

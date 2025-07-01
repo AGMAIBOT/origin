@@ -39,9 +39,10 @@ from constants import (
     TIER_FREE, GPT_1, CURRENT_IMAGE_GEN_PROVIDER_KEY, 
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, GEMINI_STANDARD, 
     LAST_IMAGE_PROMPT_KEY, LAST_RESPONSE_KEY, OUTPUT_FORMAT_TEXT,
-    TRANSACTION_TYPE_TOPUP, # [Dev-Ассистент]: Добавил импорт для использования в тестовой команде
-    # [Dev-Ассистент]: Новые импорты для DALL-E 3 оплаты
-    CURRENT_DALL_E_3_RESOLUTION_KEY, TRANSACTION_TYPE_IMAGE_GEN_COST
+    TRANSACTION_TYPE_TOPUP, 
+    # [Dev-Ассистент]: Новые импорты для DALL-E 3 и YandexArt оплаты
+    CURRENT_DALL_E_3_RESOLUTION_KEY, CURRENT_YANDEXART_RESOLUTION_KEY,
+    TRANSACTION_TYPE_IMAGE_GEN_COST, TRANSACTION_TYPE_YANDEXART_GEN_COST
 )
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler, onboarding_handler, post_processing_handler
@@ -50,6 +51,8 @@ from utils import get_main_keyboard, get_actual_user_tier, require_verification,
 from ai_clients.factory import get_ai_client_with_caps
 from ai_clients.gpt_client import GPTClient
 from ai_clients.yandexart_client import YandexArtClient
+
+# [Dev-Ассистент]: Импортируем billing_manager
 import billing_manager
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -140,11 +143,11 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         if char_info:
             system_instruction = char_info.get('prompt', system_instruction)
 
-    # [Dev-Ассистент]: НОВАЯ ЛОГИКА ОПЛАТЫ И ГЕНЕРАЦИИ ИЗОБРАЖЕНИЙ DALL-E 3
-    # Определяем, является ли текущий запрос запросом на генерацию DALL-E 3 изображения
-    is_dalle3_image_gen_request = (
-        not is_photo and not is_document and # Не фото или документ, а текстовый запрос
-        context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY) == IMAGE_GEN_DALL_E_3 and # Выбран DALL-E 3
+    # [Dev-Ассистент]: УНИВЕРСАЛЬНАЯ ЛОГИКА ДЛЯ ГЕНЕРАЦИИ ИЗОБРАЖЕНИЙ (DALL-E 3 и YandexArt)
+    # Определяем, является ли текущий запрос запросом на генерацию изображения (для любого провайдера)
+    is_image_gen_request_state = (
+        not is_photo and not is_document and # Это текстовый запрос (не фото или документ)
+        context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY) in [IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART] and # Выбран генератор изображений
         context.user_data.get('state') == STATE_WAITING_FOR_IMAGE_PROMPT # Бот находится в ожидании промпта для картинки
     )
 
@@ -157,39 +160,80 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     reply_markup = None
 
     try:
-        if is_dalle3_image_gen_request:
-            current_dalle3_resolution = context.user_data.get(CURRENT_DALL_E_3_RESOLUTION_KEY, config.DALL_E_3_DEFAULT_RESOLUTION)
-            
-            # [Dev-Ассистент]: Используем billing_manager для проверки и списания средств
-            deduction_successful = await billing_manager.perform_deduction(
-                user_id, 
-                'dalle3_image_gen', # Тип услуги
-                current_dalle3_resolution, # Идентификатор услуги (размер)
-                update, 
-                context
-            )
-            
-            if not deduction_successful:
-                return # Прерываем выполнение, если списание не удалось (недостаточно средств или ошибка)
+        if is_image_gen_request_state:
+            image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
+            deduction_successful = False
+            image_url = None # Для DALL-E 3
+            image_bytes = None # Для YandexArt
+            error_message = None # Общая переменная для сообщения об ошибке
 
-            # [Dev-Ассистент]: Отменяем индикатор TYPING и включаем UPLOAD_PHOTO
-            indicator_task.cancel()
-            indicator_task = asyncio.create_task(_keep_indicator_alive(context.bot, chat_id, ChatAction.UPLOAD_PHOTO))
-
-            caps = get_ai_client_with_caps(GPT_1, system_instruction="You are an image generation assistant.") # Используем GPT_1 для DALL-E 3
-            # [Dev-Ассистент]: Передаем выбранное разрешение
-            image_url, error_message = await caps.client.generate_image(user_content, size=current_dalle3_resolution) 
-
-            if error_message:
-                await context.bot.send_message(chat_id=chat_id, text=f"😔 Ошибка: {error_message}")
-            elif image_url:
-                # [Dev-Ассистент]: Логика списания перенесена в billing_manager.perform_deduction
+            if image_gen_provider == IMAGE_GEN_DALL_E_3:
+                current_resolution = context.user_data.get(CURRENT_DALL_E_3_RESOLUTION_KEY, config.DALL_E_3_DEFAULT_RESOLUTION)
                 
-                # [Dev-Ассистент]: Клавиатура для перерисовки/нового изображения
+                # [Dev-Ассистент]: Используем billing_manager для проверки и списания средств
+                deduction_successful = await billing_manager.perform_deduction(
+                    user_id, 
+                    'dalle3_image_gen', # Тип услуги
+                    current_resolution, # Идентификатор услуги (размер)
+                    update, 
+                    context
+                )
+                
+                if not deduction_successful: 
+                    return # Прерываем, если списание не удалось (сообщение уже отправлено perform_deduction)
+
+                # [Dev-Ассистент]: Отменяем индикатор TYPING и включаем UPLOAD_PHOTO
+                indicator_task.cancel()
+                indicator_task = asyncio.create_task(_keep_indicator_alive(context.bot, chat_id, ChatAction.UPLOAD_PHOTO))
+
+                caps = get_ai_client_with_caps(GPT_1, system_instruction="You are an image generation assistant.") # Используем GPT_1 для DALL-E 3
+                image_url, error_message = await caps.client.generate_image(user_content, size=current_resolution) 
+                
+                if error_message: # [Dev-Ассистент]: ИСПРАВЛЕНО ЗДЕСЬ
+                     await context.bot.send_message(chat_id=chat_id, text=f"😔 Ошибка: {error_message}")
+                     return # Выходим
+
+            elif image_gen_provider == IMAGE_GEN_YANDEXART: # [Dev-Ассистент]: Логика для YandexArt
+                current_resolution = context.user_data.get(CURRENT_YANDEXART_RESOLUTION_KEY, config.YANDEXART_DEFAULT_RESOLUTION)
+                
+                # [Dev-Ассистент]: Используем billing_manager для проверки и списания средств
+                deduction_successful = await billing_manager.perform_deduction(
+                    user_id, 
+                    'yandexart_image_gen', # Тип услуги
+                    current_resolution, # Идентификатор услуги (размер)
+                    update, 
+                    context
+                )
+                
+                if not deduction_successful: 
+                    return # Прерываем, если списание не удалось (сообщение уже отправлено perform_deduction)
+
+                # [Dev-Ассистент]: Отменяем индикатор TYPING и включаем UPLOAD_PHOTO
+                indicator_task.cancel()
+                indicator_task = asyncio.create_task(_keep_indicator_alive(context.bot, chat_id, ChatAction.UPLOAD_PHOTO))
+                
+                await context.bot.send_message(chat_id=chat_id, text=f"🎨 Принято! Отправляю запрос в YandexArt (размер: {config.YANDEXART_PRICING[current_resolution]['display_name']}), это может занять до 2 минут...") # [Dev-Ассистент]: Уведомление для YandexArt
+                
+                yandex_client = YandexArtClient(folder_id=os.getenv("YANDEX_FOLDER_ID"), api_key=os.getenv("YANDEX_API_KEY"))
+                # [Dev-Ассистент]: Передаем разрешение в generate_image YandexArt
+                image_bytes, error_message = await yandex_client.generate_image(user_content, size=current_resolution) 
+                
+                if error_message: # [Dev-Ассистент]: Если ошибка, сообщение сразу
+                     await context.bot.send_message(chat_id=chat_id, text=f"😔 Ошибка: {error_message}")
+                     return # Выходим
+
+            # [Dev-Ассистент]: Общий блок для отправки изображения, если оно было успешно получено
+            if image_url or image_bytes: 
+            # [Dev-Ассистент]: Логика списания перенесена в billing_manager.perform_deduction
+            
                 reply_markup_for_image = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw")],
-                    [InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")]
-                ])
+                [InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw"),
+                 InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")],
+                [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_image_gen_ai_selection")] # [Dev-Ассистент]: НОВАЯ КНОПКА НАЗАД
+            ])
+            # [Dev-Ассистент]: НОВОЕ: Добавляем кнопку "Назад"
+            
+            if image_url:
                 await context.bot.send_photo(
                     chat_id=chat_id, 
                     photo=image_url, 
@@ -197,12 +241,20 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                     parse_mode='Markdown',
                     reply_markup=reply_markup_for_image
                 )
-                context.user_data['state'] = STATE_NONE # Сбрасываем состояние после генерации
-                context.user_data[LAST_IMAGE_PROMPT_KEY] = user_content # Сохраняем промпт для перерисовки
-            else:
-                await context.bot.send_message(chat_id=chat_id, text="Произошла неизвестная ошибка, картинка не была получена.")
-            return # Выходим, т.к. это была генерация изображения, а не текст.
-
+            elif image_bytes:
+                await context.bot.send_photo(
+                    chat_id=chat_id, 
+                    photo=image_bytes, 
+                    caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{user_content}`", 
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup_for_image
+                )
+            context.user_data['state'] = STATE_NONE # Сбрасываем состояние после генерации
+            context.user_data[LAST_IMAGE_PROMPT_KEY] = user_content # Сохраняем промпт для перерисовки
+        else:
+            # Этот else сработает, если error_message был None, но image_url/image_bytes тоже None (очень редкий случай)
+            await context.bot.send_message(chat_id=chat_id, text="Произошла неизвестная ошибка, картинка не была получена.")
+        return # Выходим, т.к. это была генерация изображения, а не текст.
 
         # --- Начало старой логики обработки сообщений (текст, фото, документы) ---
         try:
@@ -258,7 +310,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
             pass
         
         # [Dev-Ассистент]: Условие отправки текстового ответа, чтобы не пересекаться с ответами от генерации изображений
-        if processed_html_text and not is_dalle3_image_gen_request:
+        if processed_html_text and not is_image_gen_request_state: 
             final_reply_markup = reply_markup if "ошибка" not in processed_html_text else None
             await utils.send_long_message(
                 update, context, 
@@ -363,10 +415,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
 
         clean_prompt_text = utils.strip_markdown_for_prompt(original_prompt_text)
 
-        image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
-        context.user_data[LAST_IMAGE_PROMPT_KEY] = original_prompt_text # [Dev-Ассистент]: Сохраняем промпт здесь, если это был DALL-E 3 запрос
-        
-        # [Dev-Ассистент]: Передаем логику обработки сюда (она будет вызвана из process_ai_request)
+        # [Dev-Ассистент]: Логика обработки image_gen запросов теперь находится в process_ai_request
         await process_ai_request(update, context, user_data, original_prompt_text, 
                                  is_photo=False, image_obj=None, is_document=False, document_char_count=0)
         return # Выходим, так как процесс уже запущен

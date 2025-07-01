@@ -4,7 +4,8 @@ from constants import (
     GEMINI_STANDARD, GPT_1, GPT_2,
     OPENROUTER_DEEPSEEK, OPENROUTER_GEMINI_2_FLASH,
     DALL_E_3_SIZE_1024X1024,DALL_E_3_SIZE_1024X1792,
-    DALL_E_3_SIZE_1792X1024
+    DALL_E_3_SIZE_1792X1024,YANDEXART_SIZE_1024X1024,
+    YANDEXART_SIZE_1024X1792, YANDEXART_SIZE_1792X1024
 )
 
 # --- Настройки AI моделей ---
@@ -125,3 +126,13 @@ DALL_E_3_PRICING = {
 }
 # [Dev-Ассистент]: Разрешение DALL-E 3 по умолчанию
 DALL_E_3_DEFAULT_RESOLUTION = DALL_E_3_SIZE_1024X1792
+
+# [Dev-Ассистент]: Стоимость YandexArt Standard качества в USD по разрешениям
+YANDEXART_PRICING = { # [Dev-Ассистент]: НОВАЯ КОНСТАНТА
+    YANDEXART_SIZE_1024X1024: {"display_name": "1:1", "cost_usd": 0.05}, # 1.6 AGM
+    YANDEXART_SIZE_1024X1792: {"display_name": "9:16", "cost_usd": 0.05}, # 3.2 AGM
+    YANDEXART_SIZE_1792X1024: {"display_name": "16:9", "cost_usd": 0.05}, # 3.2 AGM
+}
+
+# [Dev-Ассистент]: Разрешение YandexArt по умолчанию
+YANDEXART_DEFAULT_RESOLUTION = YANDEXART_SIZE_1024X1792 # [Dev-Ассистент]: НОВАЯ КОНСТАНТА

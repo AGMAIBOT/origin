@@ -1,5 +1,5 @@
 # ai_clients/yandexart_client.py
-# [Dev-Ассистент]: ВЕРСИЯ С УЛУЧШЕННОЙ, НАДЕЖНОЙ ОБРАБОТКОЙ ОШИБОК
+# [Dev-Ассистент]: ВЕРСИЯ С УЛУЧШЕННОЙ, НАДЕЖНОЙ ОБРАБОТКОЙ ОШИБОК И ВЫБОРОМ РАЗРЕШЕНИЯ
 
 import os
 import logging
@@ -7,7 +7,7 @@ import asyncio
 import time
 import json
 import base64
-from typing import Tuple
+from typing import Tuple, Dict
 import aiohttp
 
 logger = logging.getLogger(__name__)
@@ -26,19 +26,31 @@ class YandexArtClient:
         self._folder_id = folder_id
         self._api_key = api_key
 
-    async def generate_image(self, prompt: str) -> Tuple[bytes | None, str | None]:
+    # [Dev-Ассистент]: Добавляем параметр `size`
+    async def generate_image(self, prompt: str, size: str = "1:1") -> Tuple[bytes | None, str | None]:
         headers = {
             "Authorization": f"Api-Key {self._api_key}",
             "Content-Type": "application/json"
         }
+        
+        # [Dev-Ассистент]: Логика определения aspectRatio на основе параметра size
+        aspect_ratio_map: Dict[str, Dict[str, str]] = {
+            "1024x1024": {"widthRatio": "1", "heightRatio": "1"},
+            "1024x1792": {"widthRatio": "9", "heightRatio": "16"}, # 9:16
+            "1792x1024": {"widthRatio": "16", "heightRatio": "9"}, # 16:9
+        }
+        
+        # [Dev-Ассистент]: Получаем выбранное соотношение или дефолтное 1:1
+        selected_aspect_ratio = aspect_ratio_map.get(size, aspect_ratio_map["1024x1024"])
+
         payload = {
             "modelUri": f"art://{self._folder_id}/yandex-art/latest",
             "messages": [{"text": prompt, "weight": "1"}],
             "generationOptions": {
                 "seed": int(time.time()),
                 "aspectRatio": {
-                    "widthRatio": "1",
-                    "heightRatio": "1"
+                    "widthRatio": selected_aspect_ratio["widthRatio"],  # [Dev-Ассистент]: Динамическое значение
+                    "heightRatio": selected_aspect_ratio["heightRatio"] # [Dev-Ассистент]: Динамическое значение
                 }
             }
         }
@@ -46,7 +58,7 @@ class YandexArtClient:
         try:
             async with aiohttp.ClientSession() as session:
                 # --- ЭТАП 1: ЗАПУСК ГЕНЕРАЦИИ ---
-                logger.info("Отправка запроса на генерацию в YandexArt (метод Api-Key)...")
+                logger.info(f"Отправка запроса на генерацию в YandexArt (размер: {size})...") # [Dev-Ассистент]: Улучшенный лог
                 async with session.post(IMAGE_API_URL, headers=headers, json=payload) as resp:
                     if resp.status != 200:
                         error_body = await resp.text()
@@ -62,23 +74,18 @@ class YandexArtClient:
 
                 # --- ЭТАП 2: ОЖИДАНИЕ РЕЗУЛЬТАТА ---
                 logger.info(f"Начало опроса операции: {operation_id}")
-                operation_url = OPERATION_API_URL_TEMPLATE.format(operation_id)
 
-                # [Dev-Ассистент]: КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ!
-                # [Dev-Ассистент]: Увеличиваем начальную задержку с 2 до 7 секунд.
-                # [Dev-Ассистент]: Это даст системам Яндекса время для синхронизации
-                # [Dev-Ассистент]: и предотвратит ошибку "Operation doesn't exist".
-                await asyncio.sleep(7)
+                # [Dev-Ассистент]: Исправление: Увеличиваем начальную задержку.
+                await asyncio.sleep(7) 
 
-                # [Dev-Ассистент]: Цикл опроса теперь будет начинаться, когда операция уже точно существует.
                 for _ in range(60): # Оставляем цикл на ~2 минуты
+                    operation_url = OPERATION_API_URL_TEMPLATE.format(operation_id) # [Dev-Ассистент]: Убедимся, что url каждый раз генерируется
                     async with session.get(operation_url, headers=headers) as op_resp:
                         if op_resp.status != 200:
                             error_body = await op_resp.text()
                             logger.error(
                                 f"Ошибка при проверке статуса операции YandexArt ({op_resp.status}): {error_body}"
                             )
-                            # [Dev-Ассистент]: Если мы все же получаем 404, сообщаем об этом.
                             if op_resp.status == 404:
                                 return None, f"Ошибка от Yandex (404): Операция не найдена. Возможно, она была удалена или еще не создана."
                             return None, f"Ошибка от Yandex ({op_resp.status}): {error_body}"
@@ -98,9 +105,7 @@ class YandexArtClient:
                             image_bytes = base64.b64decode(image_base64)
                             return image_bytes, None
                     
-                    # [Dev-Ассистент]: Пауза между попытками опроса остается 2 секунды.
                     await asyncio.sleep(2)
-
 
                 return None, "Время ожидания генерации истекло."
 
