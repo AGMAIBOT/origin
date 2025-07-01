@@ -1,4 +1,4 @@
-# handlers/ai_selection_handler.py (РЕФАКТОРИНГ НА HTML)
+# handlers/ai_selection_handler.py (ФИНАЛЬНАЯ ВЕРСИЯ - С УЧЁТОМ ВСЕХ НЮАНСОВ)
 
 import html
 import logging
@@ -28,7 +28,7 @@ import billing_manager
 logger = logging.getLogger(__name__)
 
 # [Dev-Ассистент]: Вспомогательная функция для формирования меню выбора AI для генерации
-async def _get_image_generation_menu_content() -> tuple[str, InlineKeyboardMarkup]: # [Dev-Ассистент]: Функция остаётся async
+async def _get_image_generation_menu_content() -> tuple[str, InlineKeyboardMarkup]:
     text = "Выберите AI для генерации изображения:"
     keyboard = [
         [InlineKeyboardButton("🤖 GPT (DALL-E 3)", callback_data=f"select_image_gen_{IMAGE_GEN_DALL_E_3}")],
@@ -97,7 +97,12 @@ async def show_image_ai_selection_menu(update: Update, context: ContextTypes.DEF
 
 # [Dev-Ассистент]: show_image_generation_ai_selection_menu теперь использует вспомогательную функцию
 async def show_image_generation_ai_selection_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text, reply_markup = await _get_image_generation_menu_content() # [Dev-Ассистент]: ДОБАВЛЕНО await
+    # [Dev-Ассистент]: Сбрасываем текущий выбор провайдера, чтобы при входе в это меню всегда был выбор
+    context.user_data.pop(CURRENT_IMAGE_GEN_PROVIDER_KEY, None)
+    context.user_data.pop(LAST_IMAGE_PROMPT_KEY, None)
+    context.user_data['state'] = STATE_NONE # Убеждаемся, что FSM сброшен
+    
+    text, reply_markup = await _get_image_generation_menu_content()
     await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
 
 async def prompt_for_image_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -123,26 +128,17 @@ async def prompt_for_image_text(update: Update, context: ContextTypes.DEFAULT_TY
         resolution_key = CURRENT_YANDEXART_RESOLUTION_KEY
         callback_prefix = "select_yandexart_res_"
     else:
-        # [Dev-Ассистент]: Если не DALL-E 3 и не YandexArt, то просто "Назад"
-        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="image_gen_create")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        context.user_data['state'] = STATE_WAITING_FOR_IMAGE_PROMPT
-
-        if query and query.message and query.message.text:
-            try:
-                await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
-            except BadRequest as e:
-                if "Message is not modified" in str(e): 
-                    await query.answer()
-                else: 
-                    raise
-        else:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
+        # [Dev-Ассистент]: Если не DALL-E 3 и не YandexArt (что не должно произойти, если мы правильно сбрасываем)
+        # [Dev-Ассистент]: Тогда отправляем пользователя обратно в выбор генератора.
+        # [Dev-Ассистент]: Это резервный вариант, если вдруг CURRENT_IMAGE_GEN_PROVIDER_KEY не установлен.
+        await update.callback_query.answer("Пожалуйста, сначала выберите AI для генерации.", show_alert=True)
+        # Отправляем НОВОЕ сообщение с выбором AI для генерации, как будто нажали "Создать новое"
+        text, reply_markup = await _get_image_generation_menu_content()
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            reply_markup=reply_markup
+        )
         return
 
     # [Dev-Ассистент]: Этот блок будет выполняться для DALL-E 3 и YandexArt
@@ -224,21 +220,19 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
     if query.data == "image_create_new":
         await query.answer()
         
-        # [Dev-Ассистент]: Получаем ранее выбранный провайдер генерации изображений.
-        # [Dev-Ассистент]: Этот ключ устанавливается при первом выборе DALL-E 3 или YandexArt.
-        previously_selected_image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
+        # [Dev-Ассистент]: Сбрасываем выбранного провайдера и промпт при создании нового изображения,
+        # [Dev-Ассистент]: чтобы пользователь всегда видел меню выбора AI для генерации.
+        context.user_data.pop(CURRENT_IMAGE_GEN_PROVIDER_KEY, None) 
+        context.user_data.pop(LAST_IMAGE_PROMPT_KEY, None) 
+        context.user_data['state'] = STATE_NONE # Убеждаемся, что FSM сброшен
 
-        # [Dev-Ассистент]: Если ранее был выбран провайдер генерации, сразу перенаправляем пользователя
-        # [Dev-Ассистент]: в режим ожидания промпта с кнопками выбора разрешения.
-        if previously_selected_image_gen_provider:
-            # [Dev-Ассистент]: Так как previously_selected_image_gen_provider уже в CURRENT_IMAGE_GEN_PROVIDER_KEY,
-            # [Dev-Ассистент]: функция prompt_for_image_text автоматически выберет нужные опции.
-            await prompt_for_image_text(update, context)
-        else:
-            # [Dev-Ассистент]: Если провайдер генерации не был выбран (например, это первый раз, когда
-            # [Dev-Ассистент]: пользователь зашел в "Создать новое" из общего меню),
-            # [Dev-Ассистент]: показываем меню выбора AI для генерации.
-            await show_image_generation_ai_selection_menu(update, context)
+        # [Dev-Ассистент]: Отправляем НОВОЕ сообщение с выбором AI для генерации.
+        text, reply_markup = await _get_image_generation_menu_content()
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            reply_markup=reply_markup
+        )
             
         return True
 
@@ -257,7 +251,7 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
             InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw"),
             InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")
         ],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_image_gen_ai_selection")] # [Dev-Ассистент]: НОВАЯ КНОПКА НАЗАД
+        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_image_gen_ai_selection")] 
         ]
         reply_markup = InlineKeyboardMarkup(reply_keyboard)
         
@@ -339,6 +333,11 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
 
     if query.data == "select_mode_text":
         await query.answer()
+        # [Dev-Ассистент]: Сбрасываем все, что связано с генерацией изображений,
+        # [Dev-Ассистент]: когда пользователь переходит в текстовый режим.
+        context.user_data.pop(CURRENT_IMAGE_GEN_PROVIDER_KEY, None)
+        context.user_data.pop(LAST_IMAGE_PROMPT_KEY, None)
+        context.user_data['state'] = STATE_NONE 
         await show_text_ai_selection_menu(update, context)
         return True
     
@@ -349,6 +348,11 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
         
     if query.data == "back_to_ai_mode_hub":
         await query.answer()
+        # [Dev-Ассистент]: Сбрасываем все, что связано с генерацией изображений,
+        # [Dev-Ассистент]: когда пользователь возвращается в главный хаб выбора режима AI.
+        context.user_data.pop(CURRENT_IMAGE_GEN_PROVIDER_KEY, None)
+        context.user_data.pop(LAST_IMAGE_PROMPT_KEY, None)
+        context.user_data['state'] = STATE_NONE 
         await show_ai_mode_selection_hub(update, context)
         return True
     
@@ -373,10 +377,14 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
     # [Dev-Ассистент]: ОБНОВЛЕННЫЙ ОБРАБОТЧИК ДЛЯ КНОПКИ "НАЗАД" ПОСЛЕ ГЕНЕРАЦИИ ИЗОБРАЖЕНИЯ.
     # [Dev-Ассистент]: Эта кнопка ведет на *новое* сообщение с меню выбора AI для генерации.
     if query.data == "back_to_image_gen_ai_selection":
-        await query.answer() # Отвечаем на колбэк-запрос
+        await query.answer() 
         
         # [Dev-Ассистент]: Получаем текст и клавиатуру из вспомогательной функции.
-        # [Dev-Ассистент]: Здесь тоже ДОБАВЛЕНО await
+        # [Dev-Ассистент]: Сбрасываем выбранного провайдера и промпт при возврате в это меню,
+        # [Dev-Ассистент]: чтобы всегда начинать с выбора AI-художника.
+        context.user_data.pop(CURRENT_IMAGE_GEN_PROVIDER_KEY, None) 
+        context.user_data.pop(LAST_IMAGE_PROMPT_KEY, None) 
+        context.user_data['state'] = STATE_NONE # Убеждаемся, что FSM сброшен
         text, reply_markup = await _get_image_generation_menu_content() 
 
         # [Dev-Ассистент]: Отправляем НОВОЕ сообщение, оставляя сообщение с изображением нетронутым.
@@ -385,7 +393,7 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
             text=text,
             reply_markup=reply_markup
         )
-        return True # Обработка завершена.
+        return True 
 
 
     if query.data.startswith("select_ai_"):

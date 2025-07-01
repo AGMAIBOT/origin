@@ -180,6 +180,8 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 )
                 
                 if not deduction_successful: 
+                    # [Dev-Ассистент]: Сбрасываем состояние, даже если списание не удалось
+                    context.user_data['state'] = STATE_NONE
                     return # Прерываем, если списание не удалось (сообщение уже отправлено perform_deduction)
 
                 # [Dev-Ассистент]: Отменяем индикатор TYPING и включаем UPLOAD_PHOTO
@@ -189,8 +191,10 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 caps = get_ai_client_with_caps(GPT_1, system_instruction="You are an image generation assistant.") # Используем GPT_1 для DALL-E 3
                 image_url, error_message = await caps.client.generate_image(user_content, size=current_resolution) 
                 
-                if error_message: # [Dev-Ассистент]: ИСПРАВЛЕНО ЗДЕСЬ
+                if error_message: # [Dev-Ассистент]: Если ошибка, сообщение сразу
                      await context.bot.send_message(chat_id=chat_id, text=f"😔 Ошибка: {error_message}")
+                     # [Dev-Ассистент]: Сбрасываем состояние при ошибке генерации
+                     context.user_data['state'] = STATE_NONE
                      return # Выходим
 
             elif image_gen_provider == IMAGE_GEN_YANDEXART: # [Dev-Ассистент]: Логика для YandexArt
@@ -206,6 +210,8 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 )
                 
                 if not deduction_successful: 
+                    # [Dev-Ассистент]: Сбрасываем состояние, даже если списание не удалось
+                    context.user_data['state'] = STATE_NONE
                     return # Прерываем, если списание не удалось (сообщение уже отправлено perform_deduction)
 
                 # [Dev-Ассистент]: Отменяем индикатор TYPING и включаем UPLOAD_PHOTO
@@ -220,6 +226,8 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 
                 if error_message: # [Dev-Ассистент]: Если ошибка, сообщение сразу
                      await context.bot.send_message(chat_id=chat_id, text=f"😔 Ошибка: {error_message}")
+                     # [Dev-Ассистент]: Сбрасываем состояние при ошибке генерации
+                     context.user_data['state'] = STATE_NONE
                      return # Выходим
 
             # [Dev-Ассистент]: Общий блок для отправки изображения, если оно было успешно получено
@@ -231,7 +239,6 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                  InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")],
                 [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_image_gen_ai_selection")] # [Dev-Ассистент]: НОВАЯ КНОПКА НАЗАД
             ])
-            # [Dev-Ассистент]: НОВОЕ: Добавляем кнопку "Назад"
             
             if image_url:
                 await context.bot.send_photo(
@@ -249,12 +256,16 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                     parse_mode='Markdown',
                     reply_markup=reply_markup_for_image
                 )
-            context.user_data['state'] = STATE_NONE # Сбрасываем состояние после генерации
-            context.user_data[LAST_IMAGE_PROMPT_KEY] = user_content # Сохраняем промпт для перерисовки
-        else:
-            # Этот else сработает, если error_message был None, но image_url/image_bytes тоже None (очень редкий случай)
-            await context.bot.send_message(chat_id=chat_id, text="Произошла неизвестная ошибка, картинка не была получена.")
-        return # Выходим, т.к. это была генерация изображения, а не текст.
+            else:
+                # Этот else сработает, если error_message был None, но image_url/image_bytes тоже None (очень редкий случай)
+                await context.bot.send_message(chat_id=chat_id, text="Произошла неизвестная ошибка, картинка не была получена.")
+            
+            # [Dev-Ассистент]: СБРОС СОСТОЯНИЯ ВСЕГДА ПОСЛЕ ПОПЫТКИ ГЕНЕРАЦИИ ИЗОБРАЖЕНИЯ.
+            # [Dev-Ассистент]: Это гарантирует, что бот выйдет из режима ожидания промпта для картинки.
+            context.user_data['state'] = STATE_NONE 
+            # [Dev-Ассистент]: Сохраняем промпт для перерисовки (даже если не было картинки, чтобы можно было перерисовать)
+            context.user_data[LAST_IMAGE_PROMPT_KEY] = user_content 
+            return # Выходим, т.к. это была генерация изображения, а не текст.
 
         # --- Начало старой логики обработки сообщений (текст, фото, документы) ---
         try:
