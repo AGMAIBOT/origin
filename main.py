@@ -50,6 +50,7 @@ from utils import get_main_keyboard, get_actual_user_tier, require_verification,
 from ai_clients.factory import get_ai_client_with_caps
 from ai_clients.gpt_client import GPTClient
 from ai_clients.yandexart_client import YandexArtClient
+import billing_manager
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
@@ -158,25 +159,18 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     try:
         if is_dalle3_image_gen_request:
             current_dalle3_resolution = context.user_data.get(CURRENT_DALL_E_3_RESOLUTION_KEY, config.DALL_E_3_DEFAULT_RESOLUTION)
-            cost_usd = config.DALL_E_3_PRICING[current_dalle3_resolution]['cost_usd']
-            cost_agm = int(cost_usd * config.USD_TO_AGM_RATE)
             
-            user_account_data = await db.get_user_by_id(user_id) # Перезагружаем данные пользователя для актуального баланса
-            user_balance = user_account_data.get('balance', 0)
-
-            if user_balance < cost_agm:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=(
-                        f"😔 <b>Недостаточно AGMcoin для генерации изображения.</b>\n\n"
-                        f"Ваш баланс: <code>{user_balance}</code> AGMcoin.\n"
-                        f"Требуется: <code>{cost_agm}</code> AGMcoin для разрешения "
-                        f"<code>{config.DALL_E_3_PRICING[current_dalle3_resolution]['display_name']}</code>.\n\n"
-                        f"Пополните баланс в разделе ⚙️ Профиль -> 👛 Кошелек."
-                    ),
-                    parse_mode='HTML'
-                )
-                return # Прерываем выполнение, если не хватает средств
+            # [Dev-Ассистент]: Используем billing_manager для проверки и списания средств
+            deduction_successful = await billing_manager.perform_deduction(
+                user_id, 
+                'dalle3_image_gen', # Тип услуги
+                current_dalle3_resolution, # Идентификатор услуги (размер)
+                update, 
+                context
+            )
+            
+            if not deduction_successful:
+                return # Прерываем выполнение, если списание не удалось (недостаточно средств или ошибка)
 
             # [Dev-Ассистент]: Отменяем индикатор TYPING и включаем UPLOAD_PHOTO
             indicator_task.cancel()
@@ -189,13 +183,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
             if error_message:
                 await context.bot.send_message(chat_id=chat_id, text=f"😔 Ошибка: {error_message}")
             elif image_url:
-                # [Dev-Ассистент]: Списываем средства только после успешной генерации
-                await db.update_user_balance(
-                    user_id, 
-                    -cost_agm, 
-                    TRANSACTION_TYPE_IMAGE_GEN_COST, 
-                    description=f"Оплата генерации DALL-E 3 ({current_dalle3_resolution})"
-                )
+                # [Dev-Ассистент]: Логика списания перенесена в billing_manager.perform_deduction
                 
                 # [Dev-Ассистент]: Клавиатура для перерисовки/нового изображения
                 reply_markup_for_image = InlineKeyboardMarkup([

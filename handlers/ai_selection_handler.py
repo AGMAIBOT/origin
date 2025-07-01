@@ -20,6 +20,7 @@ from ai_clients.yandexart_client import YandexArtClient
 from ai_clients.factory import get_ai_client_with_caps
 from telegram.constants import ChatAction
 import os
+import billing_manager
 
 logger = logging.getLogger(__name__)
 
@@ -161,8 +162,16 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
     if query.data.startswith("select_dalle3_res_"):
         new_resolution = query.data.replace("select_dalle3_res_", "")
         context.user_data[CURRENT_DALL_E_3_RESOLUTION_KEY] = new_resolution
-        await query.answer(f"Выбрано разрешение: {config.DALL_E_3_PRICING[new_resolution]['display_name']}")
         
+        # [Dev-Ассистент]: Показываем пользователю стоимость при выборе разрешения
+        try:
+            cost_agm = await billing_manager.get_item_cost('dalle3_image_gen', new_resolution)
+            display_name = config.DALL_E_3_PRICING[new_resolution]['display_name']
+            await query.answer(f"Выбрано {display_name}. Стоимость: {cost_agm} coin.")
+        except ValueError as e:
+            await query.answer(f"Ошибка: {e}", show_alert=True)
+            logger.error(f"Ошибка при получении стоимости DALL-E 3: {e}")
+            
         # [Dev-Ассистент]: Перерисовываем меню, чтобы отметить выбранное разрешение
         await prompt_for_image_text(update, context) # Это перестроит и отредактирует сообщение
         return True
@@ -213,20 +222,19 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
             
             await query.message.reply_text(f"🎨 Повторяю запрос в DALL-E 3 (размер: {config.DALL_E_3_PRICING[current_dalle3_resolution]['display_name']}):\n\n<code>{safe_prompt}</code>", parse_mode='HTML')
             
-            # [Dev-Ассистент]: Рассчитываем стоимость для повторной генерации
-            cost_usd = config.DALL_E_3_PRICING[current_dalle3_resolution]['cost_usd']
-            cost_agm = int(cost_usd * config.USD_TO_AGM_RATE)
-            
             user_id_db = await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
-            user_account_data = await db.get_user_by_id(user_id_db)
-            user_balance = user_account_data.get('balance', 0)
-
-            if user_balance < cost_agm:
-                await query.message.reply_text(
-                    f"😔 Недостаточно AGMcoin для перерисовки. "
-                    f"Ваш баланс: {user_balance}. Требуется: {cost_agm}."
-                )
-                return True # Прекращаем выполнение, если не хватает средств
+            
+            # [Dev-Ассистент]: Используем billing_manager для проверки и списания средств
+            deduction_successful = await billing_manager.perform_deduction(
+                user_id_db, 
+                'dalle3_image_gen', # Тип услуги
+                current_dalle3_resolution, # Идентификатор услуги (размер)
+                update, 
+                context
+            )
+            
+            if not deduction_successful:
+                return True # Прерываем выполнение, если списание не удалось (недостаточно средств или ошибка)
 
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
             try:
@@ -237,13 +245,7 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
                 if error_message: 
                     await query.message.reply_text(f"😔 Ошибка при перерисовке: {error_message}")
                 elif image_url: 
-                    # [Dev-Ассистент]: Списываем средства только после успешной генерации
-                    await db.update_user_balance(
-                        user_id_db, 
-                        -cost_agm, 
-                        TRANSACTION_TYPE_IMAGE_GEN_COST, 
-                        description=f"Оплата перерисовки DALL-E 3 ({current_dalle3_resolution})"
-                    )
+                    # [Dev-Ассистент]: Логика списания перенесена в billing_manager.perform_deduction
                     await query.message.reply_photo(photo=image_url, caption=caption_text, parse_mode='HTML', reply_markup=reply_markup)
                 else: 
                     await query.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")

@@ -119,10 +119,9 @@ USD_TO_AGM_RATE = 80 # 1 USD = 80 AGMcoin
 
 # [Dev-Ассистент]: Стоимость DALL-E 3 Standard качества в USD по разрешениям
 DALL_E_3_PRICING = {
-    DALL_E_3_SIZE_1024X1024: {"display_name": "1:1", "cost_usd": 0.04},
-    DALL_E_3_SIZE_1024X1792: {"display_name": "9:16", "cost_usd": 0.08},
-    DALL_E_3_SIZE_1792X1024: {"display_name": "16:9", "cost_usd": 0.08}, # Исправлено на 16:9
+    DALL_E_3_SIZE_1024X1024: {"display_name": "1:1", "cost_usd": 0.08},
+    DALL_E_3_SIZE_1024X1792: {"display_name": "9:16", "cost_usd": 0.16},
+    DALL_E_3_SIZE_1792X1024: {"display_name": "16:9", "cost_usd": 0.16},
 }
-
 # [Dev-Ассистент]: Разрешение DALL-E 3 по умолчанию
-DALL_E_3_DEFAULT_RESOLUTION = DALL_E_3_SIZE_1024X1024
+DALL_E_3_DEFAULT_RESOLUTION = DALL_E_3_SIZE_1024X1792
