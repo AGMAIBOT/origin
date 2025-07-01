@@ -129,8 +129,8 @@ async def show_character_categories_menu(update: Update, context: ContextTypes.D
     keyboard = [
         [InlineKeyboardButton("🗣️ Разговорные", callback_data="category_conversational")],
         [InlineKeyboardButton("🎓 Специалисты", callback_data="category_specialists")],
+        [InlineKeyboardButton("🎓 AGM Учителя", callback_data="category_teachers")],
         [InlineKeyboardButton("⚔️ Ролевые игры (Quest)", callback_data="category_quest")],
-        [InlineKeyboardButton("🎓 AGM Учителя", callback_data="category_teachers")], # <<< [Dev-Ассистент]: НОВАЯ КНОПКА
         [InlineKeyboardButton("🎭 Мои Персонажи", callback_data="my_custom_characters_hub")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
