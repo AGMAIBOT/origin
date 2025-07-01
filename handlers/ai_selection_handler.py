@@ -111,6 +111,10 @@ async def prompt_for_image_text(update: Update, context: ContextTypes.DEFAULT_TY
     # [Dev-Ассистент]: Получаем выбранный провайдер для генерации
     image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
 
+    # [Dev-Ассистент]: Получаем user_data для доступа к персональным дефолтам из БД
+    user_id = await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
+    user_data = await db.get_user_by_id(user_id) # [Dev-Ассистент]: Перезагружаем user_data из БД
+    
     # [Dev-Ассистент]: Основной текст сообщения
     text = "🖼️ <b>Режим генерации изображений</b>\n\nЧто нарисовать? Отправьте мне подробное текстовое описание."
     
@@ -118,21 +122,26 @@ async def prompt_for_image_text(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = []
     
     if image_gen_provider == IMAGE_GEN_DALL_E_3:
-        current_resolution = context.user_data.setdefault(CURRENT_DALL_E_3_RESOLUTION_KEY, config.DALL_E_3_DEFAULT_RESOLUTION)
+        # [Dev-Ассистент]: Получаем дефолтное разрешение: сначала из БД пользователя, затем из config.
+        user_default_res = user_data.get('default_dalle3_resolution')
+        current_resolution = user_default_res if user_default_res else config.DALL_E_3_DEFAULT_RESOLUTION
+        context.user_data[CURRENT_DALL_E_3_RESOLUTION_KEY] = current_resolution # [Dev-Ассистент]: Обновляем user_data для отображения "галочки"
+        
         pricing_data = config.DALL_E_3_PRICING
         resolution_key = CURRENT_DALL_E_3_RESOLUTION_KEY
         callback_prefix = "select_dalle3_res_"
     elif image_gen_provider == IMAGE_GEN_YANDEXART: # [Dev-Ассистент]: Логика для YandexArt
-        current_resolution = context.user_data.setdefault(CURRENT_YANDEXART_RESOLUTION_KEY, config.YANDEXART_DEFAULT_RESOLUTION)
+        # [Dev-Ассистент]: Получаем дефолтное разрешение: сначала из БД пользователя, затем из config.
+        user_default_res = user_data.get('default_yandexart_resolution')
+        current_resolution = user_default_res if user_default_res else config.YANDEXART_DEFAULT_RESOLUTION
+        context.user_data[CURRENT_YANDEXART_RESOLUTION_KEY] = current_resolution # [Dev-Ассистент]: Обновляем user_data для отображения "галочки"
+        
         pricing_data = config.YANDEXART_PRICING
         resolution_key = CURRENT_YANDEXART_RESOLUTION_KEY
         callback_prefix = "select_yandexart_res_"
     else:
-        # [Dev-Ассистент]: Если не DALL-E 3 и не YandexArt (что не должно произойти, если мы правильно сбрасываем)
-        # [Dev-Ассистент]: Тогда отправляем пользователя обратно в выбор генератора.
-        # [Dev-Ассистент]: Это резервный вариант, если вдруг CURRENT_IMAGE_GEN_PROVIDER_KEY не установлен.
+        # ... (логика для случая, если провайдер не выбран)
         await update.callback_query.answer("Пожалуйста, сначала выберите AI для генерации.", show_alert=True)
-        # Отправляем НОВОЕ сообщение с выбором AI для генерации, как будто нажали "Создать новое"
         text, reply_markup = await _get_image_generation_menu_content()
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -190,6 +199,10 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
         new_resolution = query.data.replace("select_dalle3_res_", "")
         context.user_data[CURRENT_DALL_E_3_RESOLUTION_KEY] = new_resolution
         
+        # [Dev-Ассистент]: СОХРАНЯЕМ ВЫБОР ПОЛЬЗОВАТЕЛЯ КАК ДЕФОЛТ В БД
+        user_id = await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
+        await db.set_user_default_image_resolution(user_id, IMAGE_GEN_DALL_E_3, new_resolution)
+        
         try:
             cost_agm = await billing_manager.get_item_cost('dalle3_image_gen', new_resolution)
             display_name = config.DALL_E_3_PRICING[new_resolution]['display_name']
@@ -205,6 +218,10 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
     if query.data.startswith("select_yandexart_res_"):
         new_resolution = query.data.replace("select_yandexart_res_", "")
         context.user_data[CURRENT_YANDEXART_RESOLUTION_KEY] = new_resolution
+        
+        # [Dev-Ассистент]: СОХРАНЯЕМ ВЫБОР ПОЛЬЗОВАТЕЛЯ КАК ДЕФОЛТ В БД
+        user_id = await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
+        await db.set_user_default_image_resolution(user_id, IMAGE_GEN_YANDEXART, new_resolution)
         
         try:
             cost_agm = await billing_manager.get_item_cost('yandexart_image_gen', new_resolution)

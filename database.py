@@ -36,7 +36,9 @@ def _init_db():
                     subscription_expiry_date DATETIME,
                     output_format TEXT DEFAULT 'text' NOT NULL,
                     balance INTEGER DEFAULT 0 NOT NULL,
-                    referred_by_user_id INTEGER DEFAULT NULL, -- <<< [Dev-Ассистент]: НОВЫЙ СТОЛБЕЦ
+                    referred_by_user_id INTEGER DEFAULT NULL,
+                    default_dalle3_resolution TEXT DEFAULT NULL,
+                    default_yandexart_resolution TEXT DEFAULT NULL,        
                     FOREIGN KEY (referred_by_user_id) REFERENCES users (id) ON DELETE SET NULL -- <<< [Dev-Ассистент]: СВЯЗЬ
                 )
             """)
@@ -312,7 +314,6 @@ async def get_user_referral_earnings(user_id: int) -> int:
     result = await db_request(query, (user_id, constants.TRANSACTION_TYPE_REFERRAL_COMMISSION), fetch_one=True)
     return result['SUM(amount)'] if result and result['SUM(amount)'] is not None else 0
 
-
 # --- Персонажи и История (остались без изменений) ---
 async def add_character(user_id: int, name: str, prompt: str) -> Optional[int]:
     return await db_request("INSERT INTO characters (user_id, name, prompt) VALUES (?, ?, ?)", (user_id, name, prompt))
@@ -358,6 +359,26 @@ async def set_user_output_format(user_id: int, output_format: str) -> None:
     query = "UPDATE users SET output_format = ? WHERE id = ?"
     await db_request(query, (output_format, user_id))
     logger.info(f"Для пользователя user_id={user_id} установлен формат вывода '{output_format}'.")
+
+async def set_user_default_image_resolution(user_id: int, provider_type: str, resolution: str) -> None:
+    """
+    Устанавливает разрешение по умолчанию для выбранного AI-художника для данного пользователя.
+    :param user_id: ID пользователя в БД.
+    :param provider_type: Тип провайдера ('dalle3' или 'yandexart').
+    :param resolution: Строковое представление разрешения (например, '1024x1024').
+    """
+    column_name = None
+    if provider_type == constants.IMAGE_GEN_DALL_E_3: # Используем константу для безопасности
+        column_name = "default_dalle3_resolution"
+    elif provider_type == constants.IMAGE_GEN_YANDEXART: # Используем константу для безопасности
+        column_name = "default_yandexart_resolution"
+    else:
+        logger.error(f"Попытка установить дефолтное разрешение для неизвестного типа провайдера: {provider_type}")
+        return
+
+    query = f"UPDATE users SET {column_name} = ? WHERE id = ?"
+    await db_request(query, (resolution, user_id))
+    logger.info(f"Для user_id={user_id} установлено дефолтное разрешение {resolution} для {provider_type}.")
 
 # Вызов _init_db() остается здесь
 _init_db()
