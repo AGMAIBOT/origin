@@ -77,3 +77,12 @@ FORMAT_BACK_TO_SETTINGS = "format_back_to_settings"
 OUTPUT_FORMAT_TEXT = "text"
 OUTPUT_FORMAT_TXT = "txt"
 OUTPUT_FORMAT_PDF = "pdf"
+
+# [Dev-Ассистент]: НОВЫЕ КОНСТАНТЫ ДЛЯ DALL-E 3 РАЗРЕШЕНИЙ И ОПЛАТЫ
+DALL_E_3_SIZE_1024X1024 = "1024x1024"
+DALL_E_3_SIZE_1024X1792 = "1024x1792"
+DALL_E_3_SIZE_1792X1024 = "1792x1024"
+CURRENT_DALL_E_3_RESOLUTION_KEY = "current_dalle3_resolution" # Ключ для user_data
+
+# [Dev-Ассистент]: НОВАЯ КОНСТАНТА ДЛЯ ТИПОВ ТРАНЗАКЦИЙ (для БД)
+TRANSACTION_TYPE_IMAGE_GEN_COST = "image_gen_cost"

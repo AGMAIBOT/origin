@@ -2,8 +2,11 @@
 
 from constants import (
     GEMINI_STANDARD, GPT_1, GPT_2,
-    OPENROUTER_DEEPSEEK, OPENROUTER_GEMINI_2_FLASH
+    OPENROUTER_DEEPSEEK, OPENROUTER_GEMINI_2_FLASH,
+    DALL_E_3_SIZE_1024X1024,DALL_E_3_SIZE_1024X1792,
+    DALL_E_3_SIZE_1792X1024
 )
+
 # --- Настройки AI моделей ---
 GEMINI_MODEL = "gemini-1.5-flash-latest"
 DEEPSEEK_CHAT_MODEL = "deepseek/deepseek-chat-v3-0324:free"
@@ -110,3 +113,16 @@ YANDEXART_PROMPT_LIMIT = 500
 
 # [Dev-Ассистент]: НОВАЯ КОНСТАНТА ДЛЯ РЕФЕРАЛЬНОЙ ПРОГРАММЫ
 REFERRAL_PERCENTAGE = 10 # % от пополнения реферала, который получает реферер. (Например, 10 означает 10%)
+
+# [Dev-Ассистент]: Константа для курса доллара к AGM
+USD_TO_AGM_RATE = 80 # 1 USD = 80 AGMcoin
+
+# [Dev-Ассистент]: Стоимость DALL-E 3 Standard качества в USD по разрешениям
+DALL_E_3_PRICING = {
+    DALL_E_3_SIZE_1024X1024: {"display_name": "1:1", "cost_usd": 0.04},
+    DALL_E_3_SIZE_1024X1792: {"display_name": "9:16", "cost_usd": 0.08},
+    DALL_E_3_SIZE_1792X1024: {"display_name": "16:9", "cost_usd": 0.08}, # Исправлено на 16:9
+}
+
+# [Dev-Ассистент]: Разрешение DALL-E 3 по умолчанию
+DALL_E_3_DEFAULT_RESOLUTION = DALL_E_3_SIZE_1024X1024

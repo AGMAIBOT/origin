@@ -39,7 +39,9 @@ from constants import (
     TIER_FREE, GPT_1, CURRENT_IMAGE_GEN_PROVIDER_KEY, 
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, GEMINI_STANDARD, 
     LAST_IMAGE_PROMPT_KEY, LAST_RESPONSE_KEY, OUTPUT_FORMAT_TEXT,
-    TRANSACTION_TYPE_TOPUP # [Dev-Ассистент]: Добавил импорт для использования в тестовой команде
+    TRANSACTION_TYPE_TOPUP, # [Dev-Ассистент]: Добавил импорт для использования в тестовой команде
+    # [Dev-Ассистент]: Новые импорты для DALL-E 3 оплаты
+    CURRENT_DALL_E_3_RESOLUTION_KEY, TRANSACTION_TYPE_IMAGE_GEN_COST
 )
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler, onboarding_handler, post_processing_handler
@@ -72,22 +74,12 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     user_id = user_data['id']
     chat_id = update.effective_chat.id
     
-    # [Dev-Ассистент]: Логирование для отладки, если понадобится.
-    # logger.info(f"[{user_id}] --- Начало process_ai_request ---")
-    # logger.info(f"[{user_id}] user_data['current_ai_provider'] (до всех проверок): {user_data.get('current_ai_provider')}")
-    # logger.info(f"[{user_id}] user_data['subscription_tier'] (до всех проверок): {user_data.get('subscription_tier')}")
-
     user_tier_name = await utils.get_actual_user_tier(user_data)
     user_tier_level = utils.TIER_HIERARCHY.get(user_tier_name, 0)
     
-    # logger.info(f"[{user_id}] user_tier_name (после get_actual_user_tier): {user_tier_name}")
-
     personal_ai_choice = user_data.get('current_ai_provider')
     available_providers = config.SUBSCRIPTION_TIERS[user_tier_name]['available_providers']
     
-    # logger.info(f"[{user_id}] personal_ai_choice (из user_data): {personal_ai_choice}")
-    # logger.info(f"[{user_id}] available_providers (из config для '{user_tier_name}'): {available_providers}")
-
     if personal_ai_choice and personal_ai_choice not in available_providers:
         logger.warning(f"Сброс AI для user_id={user_id}. {personal_ai_choice} недоступен для тарифа {user_tier_name}.")
         await utils.set_user_ai_provider(user_id, None) 
@@ -103,11 +95,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     ai_provider = await utils.get_user_ai_provider(user_data)
     
-    # logger.info(f"[{user_id}] ai_provider (итоговый, после всех проверок): {ai_provider}")
-
     char_name = user_data.get('current_character_name', DEFAULT_CHARACTER_NAME)
-    # [Dev-Ассистент]: Добавляем проверку, что персонаж существует в ALL_PROMPTS
-    # [Dev-Ассистент]: Это обработает случай, если 'Помощник' или другой несуществующий персонаж в БД
     if char_name not in ALL_PROMPTS and await db.get_custom_character_by_name(user_id, char_name) is None:
         logger.warning(f"Персонаж '{char_name}' не найден среди стандартных или кастомных для user_id={user_id}. Сброс на '{DEFAULT_CHARACTER_NAME}'.")
         await db.set_current_character(user_id, DEFAULT_CHARACTER_NAME)
@@ -122,7 +110,6 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         char_name = DEFAULT_CHARACTER_NAME
         user_data = await db.get_user_by_id(user_id) # Обновляем user_data после сброса
         
-    # [Dev-Ассистент]: Существующая проверка доступности по тарифу
     elif char_name in ALL_PROMPTS and char_name != DEFAULT_CHARACTER_NAME:
         char_info = ALL_PROMPTS[char_name]
         required_tier_name = char_info.get('required_tier', TIER_FREE)
@@ -152,27 +139,13 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         if char_info:
             system_instruction = char_info.get('prompt', system_instruction)
 
-    try:
-        caps = get_ai_client_with_caps(ai_provider, system_instruction)
-        ai_client = caps.client
-    except ValueError as e:
-        logger.error(f"Ошибка создания AI клиента: {e}")
-        await context.bot.send_message(chat_id=chat_id, text=f"Ошибка конфигурации: {e}")
-        return
-    
-    if is_photo and not caps.supports_vision:
-        await context.bot.send_message(chat_id=chat_id, text="К сожалению, выбранная модель AI не умеет обрабатывать изображения.")
-        return
-    if is_document and caps.file_char_limit == 0:
-        await context.bot.send_message(chat_id=chat_id, text="Обработка файлов для выбранной модели AI не поддерживается.")
-        return
-    if is_document and document_char_count > caps.file_char_limit:
-        await context.bot.send_message(chat_id=chat_id, text=f"Файл слишком большой. Максимум: {caps.file_char_limit} символов, в вашем файле: {document_char_count}.")
-        return
-
-    history_from_db = await db.get_chat_history(user_id, char_name, limit=config.DEFAULT_HISTORY_LIMIT)
-    chat_history = history_from_db + context.chat_data.get('history', [])
-    context.chat_data.pop('history', None)
+    # [Dev-Ассистент]: НОВАЯ ЛОГИКА ОПЛАТЫ И ГЕНЕРАЦИИ ИЗОБРАЖЕНИЙ DALL-E 3
+    # Определяем, является ли текущий запрос запросом на генерацию DALL-E 3 изображения
+    is_dalle3_image_gen_request = (
+        not is_photo and not is_document and # Не фото или документ, а текстовый запрос
+        context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY) == IMAGE_GEN_DALL_E_3 and # Выбран DALL-E 3
+        context.user_data.get('state') == STATE_WAITING_FOR_IMAGE_PROMPT # Бот находится в ожидании промпта для картинки
+    )
 
     indicator_task = asyncio.create_task(
         _keep_typing_indicator_alive(context.bot, chat_id)
@@ -183,6 +156,93 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     reply_markup = None
 
     try:
+        if is_dalle3_image_gen_request:
+            current_dalle3_resolution = context.user_data.get(CURRENT_DALL_E_3_RESOLUTION_KEY, config.DALL_E_3_DEFAULT_RESOLUTION)
+            cost_usd = config.DALL_E_3_PRICING[current_dalle3_resolution]['cost_usd']
+            cost_agm = int(cost_usd * config.USD_TO_AGM_RATE)
+            
+            user_account_data = await db.get_user_by_id(user_id) # Перезагружаем данные пользователя для актуального баланса
+            user_balance = user_account_data.get('balance', 0)
+
+            if user_balance < cost_agm:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"😔 <b>Недостаточно AGMcoin для генерации изображения.</b>\n\n"
+                        f"Ваш баланс: <code>{user_balance}</code> AGMcoin.\n"
+                        f"Требуется: <code>{cost_agm}</code> AGMcoin для разрешения "
+                        f"<code>{config.DALL_E_3_PRICING[current_dalle3_resolution]['display_name']}</code>.\n\n"
+                        f"Пополните баланс в разделе ⚙️ Профиль -> 👛 Кошелек."
+                    ),
+                    parse_mode='HTML'
+                )
+                return # Прерываем выполнение, если не хватает средств
+
+            # [Dev-Ассистент]: Отменяем индикатор TYPING и включаем UPLOAD_PHOTO
+            indicator_task.cancel()
+            indicator_task = asyncio.create_task(_keep_indicator_alive(context.bot, chat_id, ChatAction.UPLOAD_PHOTO))
+
+            caps = get_ai_client_with_caps(GPT_1, system_instruction="You are an image generation assistant.") # Используем GPT_1 для DALL-E 3
+            # [Dev-Ассистент]: Передаем выбранное разрешение
+            image_url, error_message = await caps.client.generate_image(user_content, size=current_dalle3_resolution) 
+
+            if error_message:
+                await context.bot.send_message(chat_id=chat_id, text=f"😔 Ошибка: {error_message}")
+            elif image_url:
+                # [Dev-Ассистент]: Списываем средства только после успешной генерации
+                await db.update_user_balance(
+                    user_id, 
+                    -cost_agm, 
+                    TRANSACTION_TYPE_IMAGE_GEN_COST, 
+                    description=f"Оплата генерации DALL-E 3 ({current_dalle3_resolution})"
+                )
+                
+                # [Dev-Ассистент]: Клавиатура для перерисовки/нового изображения
+                reply_markup_for_image = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw")],
+                    [InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")]
+                ])
+                await context.bot.send_photo(
+                    chat_id=chat_id, 
+                    photo=image_url, 
+                    caption=f"✨ Ваше изображение по запросу:\n\n`{user_content}`", 
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup_for_image
+                )
+                context.user_data['state'] = STATE_NONE # Сбрасываем состояние после генерации
+                context.user_data[LAST_IMAGE_PROMPT_KEY] = user_content # Сохраняем промпт для перерисовки
+            else:
+                await context.bot.send_message(chat_id=chat_id, text="Произошла неизвестная ошибка, картинка не была получена.")
+            return # Выходим, т.к. это была генерация изображения, а не текст.
+
+
+        # --- Начало старой логики обработки сообщений (текст, фото, документы) ---
+        try:
+            caps = get_ai_client_with_caps(ai_provider, system_instruction)
+            ai_client = caps.client
+        except ValueError as e:
+            logger.error(f"Ошибка создания AI клиента: {e}")
+            await context.bot.send_message(chat_id=chat_id, text=f"Ошибка конфигурации: {e}")
+            return
+        
+        if is_photo and not caps.supports_vision:
+            await context.bot.send_message(chat_id=chat_id, text="К сожалению, выбранная модель AI не умеет обрабатывать изображения.")
+            return
+        if is_document and caps.file_char_limit == 0:
+            await context.bot.send_message(chat_id=chat_id, text="Обработка файлов для выбранной модели AI не поддерживается.")
+            return
+        if is_document and document_char_count > caps.file_char_limit:
+            await context.bot.send_message(chat_id=chat_id, text=f"Файл слишком большой. Максимум: {caps.file_char_limit} символов, в вашем файле: {document_char_count}.")
+            return
+
+        history_from_db = await db.get_chat_history(user_id, char_name, limit=config.DEFAULT_HISTORY_LIMIT)
+        chat_history = history_from_db + context.chat_data.get('history', [])
+        context.chat_data.pop('history', None)
+
+        # [Dev-Ассистент]: Если до этого был индикатор UPLOAD_PHOTO, теперь его нужно сбросить и поставить TYPING
+        indicator_task.cancel() # Отменяем любой предыдущий индикатор
+        indicator_task = asyncio.create_task(_keep_typing_indicator_alive(context.bot, chat_id))
+        
         if is_photo and image_obj:
             raw_response_text, _ = await ai_client.get_image_response(chat_history, user_content, image_obj)
             db_user_content = f"[Изображение] {user_content}"
@@ -209,7 +269,8 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         except CancelledError:
             pass
         
-        if processed_html_text:
+        # [Dev-Ассистент]: Условие отправки текстового ответа, чтобы не пересекаться с ответами от генерации изображений
+        if processed_html_text and not is_dalle3_image_gen_request:
             final_reply_markup = reply_markup if "ошибка" not in processed_html_text else None
             await utils.send_long_message(
                 update, context, 
@@ -315,92 +376,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, use
         clean_prompt_text = utils.strip_markdown_for_prompt(original_prompt_text)
 
         image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
-        context.user_data[LAST_IMAGE_PROMPT_KEY] = original_prompt_text
+        context.user_data[LAST_IMAGE_PROMPT_KEY] = original_prompt_text # [Dev-Ассистент]: Сохраняем промпт здесь, если это был DALL-E 3 запрос
         
-        keyboard = [
-            [
-                InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw"),
-                InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        indicator_task = None
-        
-        try:
-            if image_gen_provider == IMAGE_GEN_DALL_E_3:
-                await update.message.reply_text("🎨 Принято! Начинаю рисовать через DALL-E 3, это может занять до минуты...")
-                indicator_task = asyncio.create_task(
-                    _keep_indicator_alive(context.bot, update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
-                )
-                
-                caps = get_ai_client_with_caps(GPT_1, system_instruction="You are an image generation assistant.")
-                image_url, error_message = await caps.client.generate_image(clean_prompt_text)
+        # [Dev-Ассистент]: Передаем логику обработки сюда (она будет вызвана из process_ai_request)
+        await process_ai_request(update, context, user_data, original_prompt_text, 
+                                 is_photo=False, image_obj=None, is_document=False, document_char_count=0)
+        return # Выходим, так как процесс уже запущен
 
-                if error_message:
-                    await update.message.reply_text(f"😔 Ошибка: {error_message}")
-                elif image_url:
-                    await update.message.reply_photo(
-                        photo=image_url, 
-                        caption=f"✨ Ваше изображение по запросу:\n\n`{original_prompt_text}`", 
-                        parse_mode='Markdown',
-                        reply_markup=reply_markup
-                    )
-                    context.user_data['state'] = STATE_NONE
-                else:
-                    await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
 
-            elif image_gen_provider == IMAGE_GEN_YANDEXART:
-                if len(original_prompt_text) > config.YANDEXART_PROMPT_LIMIT:
-                    cancel_button = InlineKeyboardButton("❌ Отмена", callback_data="image_gen_cancel")
-                    await update.message.reply_text(
-                        f"😔 Ваш запрос для YandexArt слишком длинный.\nМаксимум: {config.YANDEXART_PROMPT_LIMIT} символов. У вас: {len(original_prompt_text)}.",
-                        reply_markup=InlineKeyboardMarkup([[cancel_button]])
-                    )
-                    return
-                await update.message.reply_text("🎨 Принято! Отправляю запрос в YandexArt, это может занять до 2 минут...")
-                
-                indicator_task = asyncio.create_task(
-                    _keep_indicator_alive(context.bot, update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
-                )
-                
-                yandex_client = YandexArtClient(
-                    folder_id=os.getenv("YANDEX_FOLDER_ID"),
-                    api_key=os.getenv("YANDEX_API_KEY")
-                )
-                image_bytes, error_message = await yandex_client.generate_image(clean_prompt_text)
-
-                if error_message:
-                    await update.message.reply_text(f"😔 Ошибка: {error_message}")
-                elif image_bytes:
-                    await update.message.reply_photo(
-                        photo=image_bytes, 
-                        caption=f"✨ Ваше изображение от YandexArt по запросу:\n\n`{original_prompt_text}`", 
-                        parse_mode='Markdown',
-                        reply_markup=reply_markup
-                    )
-                    context.user_data['state'] = STATE_NONE
-                else:
-                    await update.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
-            
-            else:
-                await update.message.reply_text("Произошла ошибка: не выбран AI для генерации. Пожалуйста, начните сначала из меню.")
-                context.user_data['state'] = STATE_NONE
-        
-        except Exception as e:
-            logger.error(f"Критическая ошибка в блоке генерации изображений: {e}", exc_info=True)
-            await update.message.reply_text(f"Произошла критическая ошибка: {e}")
-
-        finally:
-            if indicator_task:
-                indicator_task.cancel()
-                try:
-                    await indicator_task
-                except CancelledError:
-                    pass
-        
-        return
-    
     if await characters_handler.handle_stateful_message(update, context):
         return
     

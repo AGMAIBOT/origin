@@ -12,7 +12,9 @@ from constants import (
     TIER_PRO, GEMINI_STANDARD, OPENROUTER_DEEPSEEK, GPT_1, GPT_2,
     OPENROUTER_GEMINI_2_FLASH, STATE_WAITING_FOR_IMAGE_PROMPT, STATE_NONE,
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, CURRENT_IMAGE_GEN_PROVIDER_KEY,
-    LAST_IMAGE_PROMPT_KEY, TIER_PRO, TIER_LITE
+    LAST_IMAGE_PROMPT_KEY, TIER_PRO, TIER_LITE,
+    # [Dev-Ассистент]: НОВЫЕ ИМПОРТЫ ДЛЯ DALL-E 3 РАЗРЕШЕНИЙ И КЛЮЧЕЙ
+    CURRENT_DALL_E_3_RESOLUTION_KEY, TRANSACTION_TYPE_IMAGE_GEN_COST
 )
 from ai_clients.yandexart_client import YandexArtClient
 from ai_clients.factory import get_ai_client_with_caps
@@ -95,21 +97,51 @@ async def show_image_generation_ai_selection_menu(update: Update, context: Conte
     await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
 
 async def prompt_for_image_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['state'] = STATE_WAITING_FOR_IMAGE_PROMPT
-    
-    text = "🖼️ <b>Режим генерации изображений</b>\n\nЧто нарисовать? Отправьте мне подробное текстовое описание."
-    
-    keyboard = [[InlineKeyboardButton("⬅️ Назад", callback_data="image_gen_create")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     query = update.callback_query
     
+    # [Dev-Ассистент]: Получаем выбранный провайдер для генерации
+    image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
+
+    # [Dev-Ассистент]: Основной текст сообщения
+    text = "🖼️ <b>Режим генерации изображений</b>\n\nЧто нарисовать? Отправьте мне подробное текстовое описание."
+    
+    # [Dev-Ассистент]: Формируем кнопки
+    keyboard = []
+    
+    # [Dev-Ассистент]: Если выбран DALL-E 3, добавляем кнопки выбора разрешения
+    if image_gen_provider == IMAGE_GEN_DALL_E_3:
+        # [Dev-Ассистент]: Устанавливаем разрешение по умолчанию, если оно еще не выбрано
+        current_resolution = context.user_data.setdefault(CURRENT_DALL_E_3_RESOLUTION_KEY, config.DALL_E_3_DEFAULT_RESOLUTION)
+        
+        resolution_buttons = []
+        for res_key, res_info in config.DALL_E_3_PRICING.items():
+            display_name = res_info['display_name']
+            cost_usd = res_info['cost_usd']
+            cost_agm = int(cost_usd * config.USD_TO_AGM_RATE)
+            
+            prefix = "✅ " if res_key == current_resolution else ""
+            resolution_buttons.append(
+                InlineKeyboardButton(
+                    f"{prefix}{display_name} ({cost_agm} coin)",
+                    callback_data=f"select_dalle3_res_{res_key}"
+                )
+            )
+        keyboard.append(resolution_buttons) # Добавляем кнопки разрешений в первую строку
+
+    # [Dev-Ассистент]: Всегда добавляем кнопку "Назад"
+    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="image_gen_create")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    context.user_data['state'] = STATE_WAITING_FOR_IMAGE_PROMPT
+
     if query and query.message and query.message.text:
         try:
             await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='HTML')
         except BadRequest as e:
-            if "Message is not modified" in str(e): await query.answer()
-            else: raise
+            if "Message is not modified" in str(e): 
+                await query.answer()
+            else: 
+                raise
     else:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -125,9 +157,21 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
     query = update.callback_query
     if not query: return False
 
+    # [Dev-Ассистент]: НОВЫЙ ОБРАБОТЧИК ДЛЯ ВЫБОРА РАЗРЕШЕНИЯ DALL-E 3
+    if query.data.startswith("select_dalle3_res_"):
+        new_resolution = query.data.replace("select_dalle3_res_", "")
+        context.user_data[CURRENT_DALL_E_3_RESOLUTION_KEY] = new_resolution
+        await query.answer(f"Выбрано разрешение: {config.DALL_E_3_PRICING[new_resolution]['display_name']}")
+        
+        # [Dev-Ассистент]: Перерисовываем меню, чтобы отметить выбранное разрешение
+        await prompt_for_image_text(update, context) # Это перестроит и отредактирует сообщение
+        return True
+
     if query.data == "image_create_new":
         await query.answer()
-        await prompt_for_image_text(update, context)
+        # [Dev-Ассистент]: Сбрасываем выбранное разрешение DALL-E 3 при создании нового изображения
+        context.user_data.pop(CURRENT_DALL_E_3_RESOLUTION_KEY, None)
+        await show_image_generation_ai_selection_menu(update, context) # Возвращаемся к выбору AI для генерации
         return True
 
     if query.data == "image_redraw":
@@ -140,19 +184,18 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
 
         image_gen_provider = context.user_data.get(CURRENT_IMAGE_GEN_PROVIDER_KEY)
         
+        # [Dev-Ассистент]: Клавиатура для перерисовки/нового изображения (после генерации)
         reply_keyboard = [[
             InlineKeyboardButton("🔄 Перерисовать", callback_data="image_redraw"),
             InlineKeyboardButton("✨ Создать новое", callback_data="image_create_new")
         ]]
         reply_markup = InlineKeyboardMarkup(reply_keyboard)
         
-        # [Dev-Ассистент]: Используем <code> для промпта и parse_mode='HTML'
         safe_prompt = html.escape(prompt_text)
         caption_text = f"✨ Ваше изображение по запросу:\n\n<code>{safe_prompt}</code>"
 
         if image_gen_provider == IMAGE_GEN_YANDEXART:
             await query.message.reply_text(f"🎨 Повторяю запрос в YandexArt:\n\n<code>{safe_prompt}</code>", parse_mode='HTML')
-            # ... (остальная логика YandexArt)
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
             try:
                 yandex_client = YandexArtClient(folder_id=os.getenv("YANDEX_FOLDER_ID"), api_key=os.getenv("YANDEX_API_KEY"))
@@ -165,15 +208,45 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
                 await query.message.reply_text(f"Произошла критическая ошибка: {e}")
 
         elif image_gen_provider == IMAGE_GEN_DALL_E_3:
-            await query.message.reply_text(f"🎨 Повторяю запрос в DALL-E 3:\n\n<code>{safe_prompt}</code>", parse_mode='HTML')
-            # ... (остальная логика DALL-E)
+            # [Dev-Ассистент]: Используем выбранное DALL-E 3 разрешение для перерисовки
+            current_dalle3_resolution = context.user_data.get(CURRENT_DALL_E_3_RESOLUTION_KEY, config.DALL_E_3_DEFAULT_RESOLUTION)
+            
+            await query.message.reply_text(f"🎨 Повторяю запрос в DALL-E 3 (размер: {config.DALL_E_3_PRICING[current_dalle3_resolution]['display_name']}):\n\n<code>{safe_prompt}</code>", parse_mode='HTML')
+            
+            # [Dev-Ассистент]: Рассчитываем стоимость для повторной генерации
+            cost_usd = config.DALL_E_3_PRICING[current_dalle3_resolution]['cost_usd']
+            cost_agm = int(cost_usd * config.USD_TO_AGM_RATE)
+            
+            user_id_db = await db.add_or_update_user(update.effective_user.id, update.effective_user.full_name, update.effective_user.username)
+            user_account_data = await db.get_user_by_id(user_id_db)
+            user_balance = user_account_data.get('balance', 0)
+
+            if user_balance < cost_agm:
+                await query.message.reply_text(
+                    f"😔 Недостаточно AGMcoin для перерисовки. "
+                    f"Ваш баланс: {user_balance}. Требуется: {cost_agm}."
+                )
+                return True # Прекращаем выполнение, если не хватает средств
+
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
             try:
+                # [Dev-Ассистент]: Передаем разрешение в generate_image
                 caps = get_ai_client_with_caps(GPT_1, system_instruction="You are an image generation assistant.")
-                image_url, error_message = await caps.client.generate_image(prompt_text)
-                if error_message: await query.message.reply_text(f"😔 Ошибка при перерисовке: {error_message}")
-                elif image_url: await query.message.reply_photo(photo=image_url, caption=caption_text, parse_mode='HTML', reply_markup=reply_markup)
-                else: await query.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
+                image_url, error_message = await caps.client.generate_image(prompt_text, size=current_dalle3_resolution)
+                
+                if error_message: 
+                    await query.message.reply_text(f"😔 Ошибка при перерисовке: {error_message}")
+                elif image_url: 
+                    # [Dev-Ассистент]: Списываем средства только после успешной генерации
+                    await db.update_user_balance(
+                        user_id_db, 
+                        -cost_agm, 
+                        TRANSACTION_TYPE_IMAGE_GEN_COST, 
+                        description=f"Оплата перерисовки DALL-E 3 ({current_dalle3_resolution})"
+                    )
+                    await query.message.reply_photo(photo=image_url, caption=caption_text, parse_mode='HTML', reply_markup=reply_markup)
+                else: 
+                    await query.message.reply_text("Произошла неизвестная ошибка, картинка не была получена.")
             except Exception as e:
                 logging.error(f"Критическая ошибка при перерисовке DALL-E 3: {e}", exc_info=True)
                 await query.message.reply_text(f"Произошла критическая ошибка: {e}")
@@ -214,7 +287,6 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
         return True
 
     if query.data.startswith("select_image_gen_"):
-        # ... (логика без изменений)
         image_gen_provider = query.data.replace("select_image_gen_", "")
         provider_names = {IMAGE_GEN_DALL_E_3: "GPT (DALL-E 3)", IMAGE_GEN_YANDEXART: "YandexArt"}
         provider_name = provider_names.get(image_gen_provider, "Неизвестная модель")
@@ -227,20 +299,16 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
         new_provider = query.data.replace("select_ai_", "")
         user_id = update.effective_user.id
         
-        # [Dev-Ассистент]: Блок с новой, гибкой проверкой доступа
         user_data = await db.get_user_by_telegram_id(user_id)
         user_tier = await get_actual_user_tier(user_data)
         available_providers_for_tier = config.SUBSCRIPTION_TIERS[user_tier]['available_providers']
 
         if new_provider not in available_providers_for_tier:
-            # [Dev-Ассистент]: Умный ответ, если нажали на "замочек"
             await query.answer(f"🔒 Эта модель доступна на тарифах '{config.SUBSCRIPTION_TIERS[TIER_LITE]['name']}' и '{config.SUBSCRIPTION_TIERS[TIER_PRO]['name']}'.", show_alert=True)
             return True
 
-        # [Dev-Ассистент]: Если проверка пройдена, всё как и раньше
         await set_ai_provider(user_id, new_provider)
         
-        # Получаем display_name из нашего мастер-списка
         provider_name = "Неизвестная модель"
         for model in config.ALL_TEXT_MODELS_FOR_SELECTION:
             if model['provider_id'] == new_provider:
@@ -252,7 +320,6 @@ async def handle_ai_selection_callback(update: Update, context: ContextTypes.DEF
             await show_text_ai_selection_menu(update, context)
         except BadRequest as e:
             if "Message is not modified" not in str(e): 
-                # [Dev-Ассистент]: Добавляем логгирование для редких ошибок
                 logger.warning(f"Не удалось обновить меню выбора AI: {e}")
                 pass
         return True

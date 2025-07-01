@@ -81,15 +81,16 @@ class GPTClient(BaseAIClient):
             logger.error(f"Ошибка от OpenAI Vision API: {e}", exc_info=True)
             return f"Произошла ошибка при обращении к GPT Vision: {e}", 0
 
-    async def generate_image(self, prompt: str) -> tuple[str | None, str | None]:
-        logger.info(f"Запрос на генерацию изображения с моделью dall-e-3")
+    # [Dev-Ассистент]: Изменена сигнатура метода generate_image для приема 'size'
+    async def generate_image(self, prompt: str, size: str = "1024x1024") -> tuple[str | None, str | None]:
+        logger.info(f"Запрос на генерацию изображения с моделью dall-e-3, размер: {size}") # [Dev-Ассистент]: Улучшенный лог
         try:
             response = await self._client.images.generate(
                 model="dall-e-3",
                 prompt=prompt,
                 n=1,
-                size="1024x1024",
-                quality="standard",
+                size=size, # [Dev-Ассистент]: Используем переданный размер
+                quality="standard", # [Dev-Ассистент]: Оставляем "standard" как указано в задаче
                 response_format="url",
             )
             image_url = response.data[0].url
