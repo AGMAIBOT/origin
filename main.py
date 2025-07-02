@@ -30,6 +30,7 @@ from PIL import Image
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.constants import ChatAction
+from constants import GPT_1
 import database as db
 import config
 import html
@@ -502,6 +503,79 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             await status_message.edit_text("Произошла неизвестная ошибка при обработке вашего голосового сообщения.")
 
+@require_verification
+@inject_user_data
+async def summarize_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
+    # [Dev-Ассистент]: Твой промпт суммаризатора
+    summarization_prompt = """
+Ты — высококвалифицированный, беспристрастный суммаризатор. Твоя основная задача — выполнить строгое, фактологическое, неинтерпретативное резюмирование предоставленного диалога. Резюме должно содержать исключительно информацию из диалога и обязанно явно идентифицировать все:
+1.  Ключевые факты и данные, включая их контекст и, при наличии, количественные показатели.
+2.  Принятые решения, с указанием их сути, условий и, применимо, ответственных сторон.
+3.  Достигнутые договоренности и взаимные обязательства, включая сроки исполнения и вовлеченные стороны.
+4.  Центральные темы обсуждения и основные аргументы, приведшие к решениям или договоренностям.
+
+Категорически не допускается включение личных интерпретаций, выводов, оценок, предложений или любой информации, не содержащейся напрямую в исходном тексте диалога.
+
+Цель: Достичь максимальной информационной плотности и абсолютной точности при минимально возможном объеме текста, обеспечивающего полное и неискаженное сохранение смысла и всех перечисленных ключевых деталей.
+
+Формат ответа: Единый, логически связный, повествовательный текст.
+"""
+    
+    input_text = None
+    input_type = "текста"
+    
+    # [Dev-Ассистент]: Пытаемся получить текст из сообщения или из прикрепленного файла
+    if update.message.text and len(context.args) > 0:
+        input_text = " ".join(context.args) # Если текст передан как аргумент команды
+        input_type = "аргументов команды"
+    elif update.message.document:
+        try:
+            input_text = await utils.get_text_content_from_document(update.message.document, context)
+            input_type = f"файла '{html.escape(update.message.document.file_name)}'"
+        except (ValueError, utils.FileSizeError) as e: # [Dev-Ассистент]: Использовать utils.ValueError
+            await update.message.reply_text(f"Ошибка обработки файла для суммаризации: {e}")
+            return
+    
+    if not input_text:
+        await update.message.reply_text("Пожалуйста, отправьте текст для суммаризации либо в сообщении с командой, либо прикрепите .txt файл.\nНапример: `/summarize Ваш текст...` или `/summarize` + прикрепленный файл.")
+        return
+
+    status_message = await update.message.reply_text(f"🧠 Получил текст для суммаризации из {input_type}. Отправляю в GPT (используется {config.GPT_1_MODEL})...")
+
+    try:
+        # [Dev-Ассистент]: Получаем клиент GPT (используем GPT_1, т.к. он обычно дешевле для таких задач)
+        # [Dev-Ассистент]: Передаем твой промпт суммаризатора как system_instruction
+        caps = get_ai_client_with_caps(GPT_1, system_instruction=summarization_prompt)
+        gpt_client = caps.client
+        
+        # [Dev-Ассистент]: Подсчитываем токены исходного текста
+        # [Dev-Ассистент]: Указываем модель, чтобы tiktoken выбрал правильный токенайзер
+        original_tokens = await gpt_client.count_tokens(input_text, model_name=config.GPT_1_MODEL)
+
+        # [Dev-Ассистент]: Вызываем суммаризацию (chat_history пустая, т.к. это разовый запрос на сжатие)
+        summary_text, _ = await gpt_client.get_text_response(chat_history=[], user_prompt=input_text)
+        
+        # [Dev-Ассистент]: Подсчитываем токены полученного резюме
+        summary_tokens = await gpt_client.count_tokens(summary_text, model_name=config.GPT_1_MODEL)
+
+        compression_ratio = (original_tokens - summary_tokens) / original_tokens * 100 if original_tokens else 0
+        
+        response_text = (
+            f"✅ <b>Суммаризация завершена!</b>\n\n"
+            f"<b>Оригинальный текст:</b> {original_tokens} токенов\n"
+            f"<b>Резюме:</b> {summary_tokens} токенов\n"
+            f"<b>Сжатие:</b> <code>{compression_ratio:.2f}%</code>\n\n"
+            f"<b>--- Резюме ---</b>\n\n"
+            f"{html.escape(summary_text)}"
+        )
+        
+        await status_message.edit_text(response_text, parse_mode='HTML')
+
+    except ValueError as e:
+        await status_message.edit_text(f"Ошибка конфигурации LLM для суммаризации: {e}")
+    except Exception as e:
+        logger.error(f"Критическая ошибка при суммаризации: {e}", exc_info=True)
+        await status_message.edit_text(f"Произошла неизвестная ошибка при суммаризации: {e}")
 
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await post_processing_handler.handle_post_processing_callback(update, context): return
@@ -531,6 +605,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("reset", reset_command))
     app.add_handler(CommandHandler("setsub", set_subscription_command))
+    app.add_handler(CommandHandler("summarize", summarize_command))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Выбор AI$"), require_verification(ai_selection_handler.show_ai_mode_selection_hub)))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^Персонажи$"), require_verification(character_menus.show_character_categories_menu)))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^⚙️ Профиль$"), profile_handler.show_profile_hub))

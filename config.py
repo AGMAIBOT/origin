@@ -46,7 +46,7 @@ ALL_TEXT_MODELS_FOR_SELECTION = [
 SUBSCRIPTION_TIERS = {
     'free': {
         "name": "Бесплатный",
-        "daily_limit": 50,
+        "daily_limit": 20,
         "ai_provider": GPT_1,  # Модель по умолчанию для новых пользователей этого тарифа
         "available_providers": [      # Список доступных для выбора моделей
         GPT_1
@@ -81,9 +81,9 @@ OPENROUTER_SITE_URL = "https://t.me/agmai_bot"
 OPENROUTER_SITE_NAME = "AGMAI"
 
 # --- Настройки истории чата ---
-HISTORY_LIMIT_TRIGGER = 100  # При какой длине истории запускать обрезку
-HISTORY_TRIM_TO = 50         # Сколько сообщений оставлять после обрезки
-DEFAULT_HISTORY_LIMIT = 40   # Сколько последних сообщений отправлять в AI
+HISTORY_LIMIT_TRIGGER = 120  # При какой длине истории запускать обрезку
+HISTORY_TRIM_TO = 70         # Сколько сообщений оставлять после обрезки
+DEFAULT_HISTORY_LIMIT = 50   # Сколько последних сообщений отправлять в AI
 
 # Настройки для контекстных кнопок пост-обработки.
 # Границы длины ответа (в символах) для показа разных наборов кнопок.

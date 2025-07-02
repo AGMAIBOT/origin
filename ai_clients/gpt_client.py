@@ -6,6 +6,7 @@ from PIL.Image import Image
 # [Dev-Ассистент]: openai.PermissionDeniedError импортируем для лучшей обработки ошибок
 from openai import AsyncOpenAI, Timeout, PermissionDeniedError
 import base64
+import tiktoken
 from io import BytesIO
 
 from .base_client import BaseAIClient
@@ -104,7 +105,31 @@ class GPTClient(BaseAIClient):
         except Exception as e:
             logger.error(f"Ошибка при генерации изображения через DALL-E 3 API: {e}", exc_info=True)
             return None, f"Произошла ошибка при обращении к DALL-E 3 API: {e}"
-
+        
+    async def count_tokens(self, content: str, model_name: str | None = None) -> int:
+        """
+        Подсчитывает количество токенов в заданной строке текста, используя модель GPT.
+        Если model_name не указан, используется внутреннее имя модели клиента.
+        :param content: Строка текста для подсчета.
+        :param model_name: (Опционально) Имя модели для токенайзера. По умолчанию используется self._model_name.
+        :return: Количество токенов.
+        """
+        try:
+            # tiktoken.encoding_for_model может не найти некоторые специфические модели OpenRouter.
+            # В таком случае, tiktoken рекомендует использовать 'cl100k_base'.
+            # Также model_name может быть None, тогда используем self._model_name.
+            model_to_encode = model_name if model_name else self._model_name
+            try:
+                encoding = tiktoken.encoding_for_model(model_to_encode)
+            except KeyError:
+                logger.warning(f"Токенайзер для модели '{model_to_encode}' не найден, используя 'cl100k_base'.")
+                encoding = tiktoken.get_encoding("cl100k_base")
+                
+            return len(encoding.encode(content))
+        except Exception as e:
+            logger.error(f"Ошибка при подсчете токенов для GPT: {e}", exc_info=True)
+            return 0 # Возвращаем 0 в случае ошибки
+        
     # [Dev-Ассистент]: НОВЫЙ МЕТОД ДЛЯ ТРАНСКРИПЦИИ АУДИО
     async def transcribe_audio(self, audio_bytes: bytes) -> str | None:
         """

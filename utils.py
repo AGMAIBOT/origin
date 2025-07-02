@@ -15,6 +15,8 @@ import asyncio
 import constants
 import database as db
 from constants import TIER_FREE, OUTPUT_FORMAT_TEXT, OUTPUT_FORMAT_TXT, OUTPUT_FORMAT_PDF
+import tiktoken
+
 logger = logging.getLogger(__name__)
 
 # [Dev-Ассистент]: Это позволит нам легко сравнивать, "выше" или "ниже" тариф пользователя.
@@ -326,3 +328,26 @@ async def set_user_ai_provider(user_id: int, provider_name: str | None) -> None:
     """
     await db.db_request("UPDATE users SET current_ai_provider = ? WHERE id = ?", (provider_name, user_id))
     logger.info(f"Для пользователя user_id={user_id} установлен AI-провайдер: {provider_name or 'по умолчанию'}")
+
+def count_gpt_tokens(text: str, model_name: str = "gpt-4") -> int:
+    """
+    Подсчитывает количество токенов в заданной строке текста для GPT-моделей.
+    Использует библиотеку tiktoken.
+    :param text: Строка текста для подсчета.
+    :param model_name: Имя модели (например, 'gpt-4', 'gpt-3.5-turbo').
+                       Влияет на выбор токенайзера. По умолчанию 'gpt-4'.
+    :return: Количество токенов.
+    """
+    try:
+        # tiktoken.encoding_for_model может не найти некоторые специфические модели OpenRouter или очень новые/старые.
+        # В таком случае, tiktoken рекомендует использовать 'cl100k_base' (используется для GPT-4, GPT-3.5-turbo).
+        try:
+            encoding = tiktoken.encoding_for_model(model_name)
+        except KeyError:
+            logger.warning(f"Токенайзер для модели '{model_name}' не найден, используя 'cl100k_base'.")
+            encoding = tiktoken.get_encoding("cl100k_base")
+            
+        return len(encoding.encode(text))
+    except Exception as e:
+        logger.error(f"Ошибка при подсчете токенов в utils.count_gpt_tokens: {e}", exc_info=True)
+        return 0 # Возвращаем 0 в случае ошибки
