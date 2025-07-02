@@ -10,7 +10,7 @@ from typing import Dict
 
 from asyncio import CancelledError
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 def parse_admin_ids(ids_string: str) -> List[int]:

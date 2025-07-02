@@ -16,8 +16,11 @@ import constants
 import database as db
 from constants import TIER_FREE, OUTPUT_FORMAT_TEXT, OUTPUT_FORMAT_TXT, OUTPUT_FORMAT_PDF
 import tiktoken
+from typing import Dict
 
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+logging.getLogger('utils').setLevel(logging.ERROR)
 
 # [Dev-Ассистент]: Это позволит нам легко сравнивать, "выше" или "ниже" тариф пользователя.
 TIER_HIERARCHY = {constants.TIER_FREE: 0, constants.TIER_LITE: 1, constants.TIER_PRO: 2}

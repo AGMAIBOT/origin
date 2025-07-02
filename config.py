@@ -46,15 +46,16 @@ ALL_TEXT_MODELS_FOR_SELECTION = [
 SUBSCRIPTION_TIERS = {
     'free': {
         "name": "Бесплатный",
-        "daily_limit": 20,
+        "daily_limit": 50,
         "ai_provider": GPT_1,  # Модель по умолчанию для новых пользователей этого тарифа
         "available_providers": [      # Список доступных для выбора моделей
-        GPT_1
+        GPT_1,
+        OPENROUTER_DEEPSEEK
         ],
         "can_use_vision": True,
         # [Dev-Ассистент]: НОВЫЕ НАСТРОЙКИ КОНТЕКСТА
-        "active_buffer_message_count": 19, # [Dev-Ассистент]: Количество сообщений в активном буфере
-        "summarization_token_trigger": 5000, # [Dev-Ассистент]: Порог токенов для запуска суммаризации
+        "active_buffer_message_count": 5, # [Dev-Ассистент]: Количество сообщений в активном буфере
+        "summarization_token_trigger": 3000, # [Dev-Ассистент]: Порог токенов для запуска суммаризации
         "max_llm_input_tokens": 8000, # [Dev-Ассистент]: Максимальный лимит токенов для LLM-запроса
     },
     'lite': {
