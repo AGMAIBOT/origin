@@ -1,10 +1,12 @@
-# main.py (ОБНОВЛЕННАЯ ВЕРСИЯ - С ОБРАБОТКОЙ РЕФЕРАЛЬНОЙ ССЫЛКИ И ТЕСТОМ ПОПОЛНЕНИЯ)
+# main.py (ОБНОВЛЕННАЯ ВЕРСИЯ - С ОБРАБОТКОЙ РЕФЕРАЛЬНОЙ ССЫЛКИ И ТЕСТОМ ПОПОЛНЕНИЯ И ГИБРИДНОЙ СУММАРИЗАЦИЕЙ)
 
 import os
 import logging
 import asyncio
 from dotenv import load_dotenv
-from typing import List
+from typing import List, Tuple
+# [Dev-Ассистент]: Импортируем Dict
+from typing import Dict
 
 from asyncio import CancelledError
 
@@ -48,7 +50,7 @@ from constants import (
 from characters import DEFAULT_CHARACTER_NAME, ALL_PROMPTS
 from handlers import character_menus, characters_handler, profile_handler, captcha_handler, ai_selection_handler, onboarding_handler, post_processing_handler
 import utils
-from utils import get_main_keyboard, get_actual_user_tier, require_verification, get_text_content_from_document, FileSizeError, inject_user_data
+from utils import get_main_keyboard, get_actual_user_tier, require_verification, get_text_content_from_document, FileSizeError, inject_user_data, count_gpt_tokens
 from ai_clients.factory import get_ai_client_with_caps
 from ai_clients.gpt_client import GPTClient
 from ai_clients.yandexart_client import YandexArtClient
@@ -74,6 +76,70 @@ async def _keep_indicator_alive(bot: Bot, chat_id: int, action: str):
 async def _keep_typing_indicator_alive(bot: Bot, chat_id: int):
     await _keep_indicator_alive(bot, chat_id, ChatAction.TYPING)
 
+# [Dev-Ассистент]: НОВАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ СУММАРИЗАЦИИ
+async def _perform_summarization(user_id: int, character_name: str, active_buffer_count: int) -> None:
+    """
+    Выполняет процесс суммаризации старой истории диалога и сохраняет новое резюме.
+    """
+    logger.info(f"Запуск суммаризации для user_id={user_id}, char='{character_name}'.")
+
+    # [Dev-Ассистент]: 1. Получаем все несжатые сообщения, которые нужно суммировать (т.е. все, кроме активного буфера)
+    messages_to_summarize_data = await db.get_messages_for_summarization(user_id, character_name, active_buffer_count)
+    
+    if not messages_to_summarize_data:
+        logger.debug(f"Нет сообщений для суммаризации для user_id={user_id}, char='{character_name}'. Пропускаем.")
+        return # Нет старых сообщений для суммаризации
+
+    old_messages_to_delete_ids = [msg['id'] for msg in messages_to_summarize_data]
+    
+    # [Dev-Ассистент]: 2. Получаем предыдущее глобальное резюме (если оно существовало)
+    # [Dev-Ассистент]: get_history_for_context с active_buffer_count=0 вернет только последнее резюме, если оно есть.
+    previous_summary_content = ""
+    # [Dev-Ассистент]: Важно: передаем user_id и character_name, чтобы получить резюме именно для этого диалога
+    temp_context_for_summary = await db.get_history_for_context(user_id, character_name, 0) 
+    if temp_context_for_summary and temp_context_for_summary[0]['role'] == 'model' and temp_context_for_summary[0]['parts'][0]:
+        previous_summary_content = temp_context_for_summary[0]['parts'][0]
+        logger.debug(f"Предыдущее резюме найдено, длина: {len(previous_summary_content)} символов.")
+
+    # [Dev-Ассистент]: 3. Объединяем содержимое для отправки в LLM-суммаризатор
+    combined_text_for_llm = []
+    if previous_summary_content:
+        combined_text_for_llm.append(f"ПРЕДЫДУЩЕЕ РЕЗЮМЕ ДИАЛОГА:\n{previous_summary_content}\n\nНОВЫЕ СООБЩЕНИЯ ДЛЯ ДОБАВЛЕНИЯ К РЕЗЮМЕ:\n")
+    else:
+        combined_text_for_llm.append("ДИАЛОГ ДЛЯ РЕЗЮМИРОВАНИЯ:\n")
+
+    for msg in messages_to_summarize_data:
+        combined_text_for_llm.append(f"{msg['role']}: {msg['content']}")
+    
+    full_text_to_summarize = "\n".join(combined_text_for_llm)
+
+    try:
+        # [Dev-Ассистент]: 4. Вызываем LLM-суммаризатор
+        summarization_llm_client_caps = get_ai_client_with_caps(
+            config.SUMMARIZATION_MODEL_NAME, 
+            system_instruction=config.SUMMARIZATION_PROMPT
+        )
+        summarization_ai_client = summarization_llm_client_caps.client
+        
+        summary_text, _ = await summarization_ai_client.get_text_response(chat_history=[], user_prompt=full_text_to_summarize)
+        
+        # [Dev-Ассистент]: 5. Подсчитываем токены полученного резюме
+        summary_token_count = count_gpt_tokens(summary_text, model_name=config.SUMMARIZATION_MODEL_NAME)
+        
+        # [Dev-Ассистент]: 6. Сохраняем новое резюме и удаляем старые сообщения
+        await db.save_summary_and_clean_old_messages(
+            user_id, 
+            character_name, 
+            summary_text, 
+            summary_token_count, 
+            old_messages_to_delete_ids
+        )
+        logger.info(f"Успешно завершена суммаризация для user_id={user_id}, char='{character_name}'. Новое резюме: {summary_token_count} токенов.")
+
+    except Exception as e:
+        logger.error(f"Ошибка при выполнении суммаризации для user_id={user_id}, char='{character_name}': {e}", exc_info=True)
+        # [Dev-Ассистент]: Важно: если суммаризация не удалась, старые сообщения НЕ УДАЛЯЕМ,
+        # [Dev-Ассистент]: чтобы не потерять контекст. Они будут суммированы в следующий раз.
 
 async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict, user_content: str, is_photo: bool = False, image_obj: Image = None, is_document: bool = False, document_char_count: int = 0):
     user_id = user_data['id']
@@ -82,6 +148,12 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     user_tier_name = await utils.get_actual_user_tier(user_data)
     user_tier_level = utils.TIER_HIERARCHY.get(user_tier_name, 0)
     
+    # [Dev-Ассистент]: A. Получение Тарифных Настроек
+    tier_config = config.SUBSCRIPTION_TIERS[user_tier_name]
+    active_buffer_message_count = tier_config.get("active_buffer_message_count", config.DEFAULT_HISTORY_LIMIT) # [Dev-Ассистент]: используем DEFAULT_HISTORY_LIMIT как запасной вариант
+    summarization_token_trigger = tier_config.get("summarization_token_trigger")
+    max_llm_input_tokens = tier_config.get("max_llm_input_tokens")
+
     personal_ai_choice = user_data.get('current_ai_provider')
     available_providers = config.SUBSCRIPTION_TIERS[user_tier_name]['available_providers']
     
@@ -159,6 +231,7 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
     raw_response_text = None
     processed_html_text = None
     reply_markup = None
+    current_llm_input_tokens = 0  # [Dev-Ассистент]: Переменная для хранения токенов текущего запроса, отправленных в LLM
 
     try:
         if is_image_gen_request_state:
@@ -287,28 +360,50 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await context.bot.send_message(chat_id=chat_id, text=f"Файл слишком большой. Максимум: {caps.file_char_limit} символов, в вашем файле: {document_char_count}.")
             return
 
-        history_from_db = await db.get_chat_history(user_id, char_name, limit=config.DEFAULT_HISTORY_LIMIT)
-        chat_history = history_from_db + context.chat_data.get('history', [])
-        context.chat_data.pop('history', None)
+        # [Dev-Ассистент]: E. Формирование Контекста для LLM (замена старой логики chat_history)
+        # [Dev-Ассистент]: Получаем историю, которая уже включает резюме и активный буфер
+        full_chat_history_for_llm = await db.get_history_for_context(user_id, char_name, active_buffer_message_count)
 
         # [Dev-Ассистент]: Если до этого был индикатор UPLOAD_PHOTO, теперь его нужно сбросить и поставить TYPING
         indicator_task.cancel() # Отменяем любой предыдущий индикатор
         indicator_task = asyncio.create_task(_keep_typing_indicator_alive(context.bot, chat_id))
         
+        user_message_tokens = 0 # [Dev-Ассистент]: Инициализация для user_message_tokens
+        ai_response_tokens = 0 # [Dev-Ассистент]: Инициализация для ai_response_tokens
+        
         if is_photo and image_obj:
-            raw_response_text, _ = await ai_client.get_image_response(chat_history, user_content, image_obj)
+            raw_response_text, ai_response_tokens = await ai_client.get_image_response(full_chat_history_for_llm, user_content, image_obj) # [Dev-Ассистент]: Передаем новую историю
             db_user_content = f"[Изображение] {user_content}"
+            user_message_tokens = count_gpt_tokens(db_user_content, model_name=ai_provider) # [Dev-Ассистент]: Подсчет токенов для пользовательского сообщения
         else:
-            raw_response_text, _ = await ai_client.get_text_response(chat_history, user_content)
+            raw_response_text, ai_response_tokens = await ai_client.get_text_response(full_chat_history_for_llm, user_content) # [Dev-Ассистент]: Передаем новую историю
             db_user_content = user_content
+            user_message_tokens = count_gpt_tokens(db_user_content, model_name=ai_provider) # [Dev-Ассистент]: Подсчет токенов для пользовательского сообщения
             
-        await db.add_message_to_history(user_id, char_name, 'user', db_user_content)
-        await db.add_message_to_history(user_id, char_name, 'model', raw_response_text)
+        # [Dev-Ассистент]: B. Подсчет Токенов и Сохранение в Историю
+        # [Dev-Ассистент]: Теперь передаем подсчитанные токены в add_message_to_history
+        await db.add_message_to_history(user_id, char_name, 'user', db_user_content, user_message_tokens)
+        await db.add_message_to_history(user_id, char_name, 'model', raw_response_text, ai_response_tokens)
 
+        # [Dev-Ассистент]: current_llm_input_tokens = токены_входа + токены_выхода
+        # [Dev-Ассистент]: LLM-клиенты возвращают уже общее количество токенов запроса,
+        # [Dev-Ассистент]: включая промпт и ответ. ai_response_tokens уже содержит это.
+        current_llm_input_tokens = ai_response_tokens 
+        
         context.user_data[LAST_RESPONSE_KEY] = raw_response_text
         reply_markup = post_processing_handler.get_post_processing_keyboard(len(raw_response_text))
         
         processed_html_text = utils.markdown_to_html(raw_response_text)
+
+        # [Dev-Ассистент]: C. Проверка Токен-ориентированного Триггера Суммаризации
+        if summarization_token_trigger is not None and summarization_token_trigger > 0: # [Dev-Ассистент]: Убеждаемся, что суммаризация включена
+            total_tokens_in_summarizable_history = await db.get_total_tokens_in_summarizable_history(user_id, char_name, active_buffer_message_count)
+            logger.info(f"Токены в истории для суммаризации: {total_tokens_in_summarizable_history}. Триггер: {summarization_token_trigger}.")
+            if total_tokens_in_summarizable_history >= summarization_token_trigger:
+                # [Dev-Ассистент]: D. Выполнение Суммаризации (вызов новой функции)
+                # [Dev-Ассистент]: Запускаем суммаризацию как фоновую задачу, чтобы не блокировать ответ пользователю
+                asyncio.create_task(_perform_summarization(user_id, char_name, active_buffer_message_count))
+                logger.info(f"Триггер суммаризации сработал для user_id={user_id}, char='{char_name}'.")
 
     except Exception as e:
         logger.error(f"Ошибка AI запроса для user_id={user_id}: {e}", exc_info=True)
@@ -324,9 +419,15 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
         # [Dev-Ассистент]: Условие отправки текстового ответа, чтобы не пересекаться с ответами от генерации изображений
         if processed_html_text and not is_image_gen_request_state: 
             final_reply_markup = reply_markup if "ошибка" not in processed_html_text else None
+            
+            # [Dev-Ассистент]: F. Отображение Токенов Пользователю
+            token_info = f"\n\n<i>(Токены LLM: {current_llm_input_tokens})</i>"
+            # [Dev-Ассистент]: Добавляем информацию о токенах к тексту ответа
+            final_text_to_send = processed_html_text + token_info
+
             await utils.send_long_message(
                 update, context, 
-                text=processed_html_text,
+                text=final_text_to_send, # [Dev-Ассистент]: Отправляем текст с информацией о токенах
                 reply_markup=final_reply_markup, 
                 output_format=output_format
             )
@@ -506,20 +607,9 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
 @require_verification
 @inject_user_data
 async def summarize_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user_data: dict):
-    # [Dev-Ассистент]: Твой промпт суммаризатора
-    summarization_prompt = """
-Ты — высококвалифицированный, беспристрастный суммаризатор. Твоя основная задача — выполнить строгое, фактологическое, неинтерпретативное резюмирование предоставленного диалога. Резюме должно содержать исключительно информацию из диалога и обязанно явно идентифицировать все:
-1.  Ключевые факты и данные, включая их контекст и, при наличии, количественные показатели.
-2.  Принятые решения, с указанием их сути, условий и, применимо, ответственных сторон.
-3.  Достигнутые договоренности и взаимные обязательства, включая сроки исполнения и вовлеченные стороны.
-4.  Центральные темы обсуждения и основные аргументы, приведшие к решениям или договоренностям.
-
-Категорически не допускается включение личных интерпретаций, выводов, оценок, предложений или любой информации, не содержащейся напрямую в исходном тексте диалога.
-
-Цель: Достичь максимальной информационной плотности и абсолютной точности при минимально возможном объеме текста, обеспечивающего полное и неискаженное сохранение смысла и всех перечисленных ключевых деталей.
-
-Формат ответа: Единый, логически связный, повествовательный текст.
-"""
+    # [Dev-Ассистент]: Теперь промпт и модель берутся из config.py
+    summarization_prompt = config.SUMMARIZATION_PROMPT
+    summarization_model = config.SUMMARIZATION_MODEL_NAME
     
     input_text = None
     input_type = "текста"
@@ -540,23 +630,21 @@ async def summarize_command(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         await update.message.reply_text("Пожалуйста, отправьте текст для суммаризации либо в сообщении с командой, либо прикрепите .txt файл.\nНапример: `/summarize Ваш текст...` или `/summarize` + прикрепленный файл.")
         return
 
-    status_message = await update.message.reply_text(f"🧠 Получил текст для суммаризации из {input_type}. Отправляю в GPT (используется {config.GPT_1_MODEL})...")
+    status_message = await update.message.reply_text(f"🧠 Получил текст для суммаризации из {input_type}. Отправляю в LLM (используется {summarization_model})...") # [Dev-Ассистент]: Указываем модель из конфига
 
     try:
-        # [Dev-Ассистент]: Получаем клиент GPT (используем GPT_1, т.к. он обычно дешевле для таких задач)
-        # [Dev-Ассистент]: Передаем твой промпт суммаризатора как system_instruction
-        caps = get_ai_client_with_caps(GPT_1, system_instruction=summarization_prompt)
-        gpt_client = caps.client
+        # [Dev-Ассистент]: Получаем клиент AI (используем модель из конфига)
+        caps = get_ai_client_with_caps(summarization_model, system_instruction=summarization_prompt)
+        ai_client = caps.client
         
         # [Dev-Ассистент]: Подсчитываем токены исходного текста
-        # [Dev-Ассистент]: Указываем модель, чтобы tiktoken выбрал правильный токенайзер
-        original_tokens = await gpt_client.count_tokens(input_text, model_name=config.GPT_1_MODEL)
+        original_tokens = await ai_client.count_tokens(input_text, model_name=summarization_model) # [Dev-Ассистент]: Используем метод count_tokens клиента
 
         # [Dev-Ассистент]: Вызываем суммаризацию (chat_history пустая, т.к. это разовый запрос на сжатие)
-        summary_text, _ = await gpt_client.get_text_response(chat_history=[], user_prompt=input_text)
+        summary_text, _ = await ai_client.get_text_response(chat_history=[], user_prompt=input_text)
         
         # [Dev-Ассистент]: Подсчитываем токены полученного резюме
-        summary_tokens = await gpt_client.count_tokens(summary_text, model_name=config.GPT_1_MODEL)
+        summary_tokens = await ai_client.count_tokens(summary_text, model_name=summarization_model) # [Dev-Ассистент]: Используем метод count_tokens клиента
 
         compression_ratio = (original_tokens - summary_tokens) / original_tokens * 100 if original_tokens else 0
         
