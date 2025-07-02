@@ -42,7 +42,7 @@ from constants import (
     TIER_FREE, GPT_1, CURRENT_IMAGE_GEN_PROVIDER_KEY, 
     IMAGE_GEN_DALL_E_3, IMAGE_GEN_YANDEXART, GEMINI_STANDARD, 
     LAST_IMAGE_PROMPT_KEY, LAST_RESPONSE_KEY, OUTPUT_FORMAT_TEXT,
-    TRANSACTION_TYPE_TOPUP, 
+    TRANSACTION_TYPE_TOPUP,TIER_GOLD,TIER_VIP,
     # [Dev-Ассистент]: Новые импорты для DALL-E 3 и YandexArt оплаты
     CURRENT_DALL_E_3_RESOLUTION_KEY, CURRENT_YANDEXART_RESOLUTION_KEY,
     TRANSACTION_TYPE_IMAGE_GEN_COST, TRANSACTION_TYPE_YANDEXART_GEN_COST
@@ -490,7 +490,7 @@ async def set_subscription_command(update: Update, context: ContextTypes.DEFAULT
         target_user_id_telegram = int(target_user_id_str) # Telegram ID
         days = int(days_str)
 
-        if tier not in [TIER_LITE, TIER_PRO, TIER_FREE]:
+        if tier not in [TIER_LITE, TIER_PRO, TIER_FREE, TIER_GOLD, TIER_VIP]:
             # [Dev-Ассистент]: Добавляем возможность пополнения баланса для теста реферальной комиссии
             if tier == 'topup_test': # Используем 'topup_test' как специальный параметр для пополнения
                 amount = int(days_str) # В этом случае days_str будет суммой пополнения
@@ -502,7 +502,7 @@ async def set_subscription_command(update: Update, context: ContextTypes.DEFAULT
                     await update.message.reply_text(f"Пользователь telegram_id={target_user_id_telegram} не найден для пополнения.")
                 return # Выходим после обработки тестового пополнения
             
-            await update.message.reply_text(f"Неверный уровень: используйте '{TIER_LITE}', '{TIER_PRO}' или '{TIER_FREE}'")
+            await update.message.reply_text(f"Неверный уровень: используйте '{TIER_LITE}', '{TIER_PRO}','{TIER_FREE}', '{TIER_GOLD}' или {TIER_VIP} ")
             return
         
         await db.set_user_subscription(target_user_id_telegram, tier, days)

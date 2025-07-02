@@ -30,6 +30,8 @@ MANAGE_MODE_KEY = "manage_mode"
 TIER_FREE = 'free'
 TIER_LITE = 'lite'
 TIER_PRO = 'pro'
+TIER_GOLD = 'gold'
+TIER_VIP = 'vip'
 
 # Логические идентификаторы AI провайдеров.
 GEMINI_STANDARD = "gemini_standard"

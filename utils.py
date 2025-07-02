@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger('utils').setLevel(logging.ERROR)
 
 # [Dev-Ассистент]: Это позволит нам легко сравнивать, "выше" или "ниже" тариф пользователя.
-TIER_HIERARCHY = {constants.TIER_FREE: 0, constants.TIER_LITE: 1, constants.TIER_PRO: 2}
+TIER_HIERARCHY = {constants.TIER_FREE: 0, constants.TIER_LITE: 1, constants.TIER_PRO: 2,constants.TIER_GOLD: 3,constants.TIER_VIP: 4}
 
 # --- БЛОК ОБРАБОТКИ ТЕКСТА ---
 

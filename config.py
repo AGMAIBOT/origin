@@ -87,7 +87,38 @@ SUBSCRIPTION_TIERS = {
         "active_buffer_message_count": 100, # [Dev-Ассистент]: Количество сообщений в активном буфере
         "summarization_token_trigger": 50000, # [Dev-Ассистент]: Порог токенов для запуска суммаризации
         "max_llm_input_tokens": 100000, # [Dev-Ассистент]: Максимальный лимит токенов для LLM-запроса
+    },
+    'gold': {
+        "name": "gold",
+        "daily_limit": None,
+        "ai_provider": GPT_1, # Модель по умолчанию
+        "available_providers": [      # Pro-пользователям доступны все модели из мастер-списка
+            GPT_2,
+            GPT_1,
+            OPENROUTER_DEEPSEEK,
+        ],
+        "can_use_vision": True,
+        # [Dev-Ассистент]: НОВЫЕ НАСТРОЙКИ КОНТЕКСТА
+        "active_buffer_message_count": 100, # [Dev-Ассистент]: Количество сообщений в активном буфере
+        "summarization_token_trigger": 50000, # [Dev-Ассистент]: Порог токенов для запуска суммаризации
+        "max_llm_input_tokens": 100000, # [Dev-Ассистент]: Максимальный лимит токенов для LLM-запроса
+    },
+    'vip': {
+        "name": "vip",
+        "daily_limit": None,
+        "ai_provider": GPT_1, # Модель по умолчанию
+        "available_providers": [      # Pro-пользователям доступны все модели из мастер-списка
+            GPT_2,
+            GPT_1,
+            OPENROUTER_DEEPSEEK,
+        ],
+        "can_use_vision": True,
+        # [Dev-Ассистент]: НОВЫЕ НАСТРОЙКИ КОНТЕКСТА
+        "active_buffer_message_count": 100, # [Dev-Ассистент]: Количество сообщений в активном буфере
+        "summarization_token_trigger": 50000, # [Dev-Ассистент]: Порог токенов для запуска суммаризации
+        "max_llm_input_tokens": 100000, # [Dev-Ассистент]: Максимальный лимит токенов для LLM-запроса
     }
+
 }
 OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_SITE_URL = "https://t.me/agmai_bot"
