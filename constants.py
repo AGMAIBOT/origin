@@ -8,6 +8,7 @@ STATE_WAITING_FOR_NEW_CHAR_PROMPT = 2
 STATE_EDITING_CHAR_NAME = 3
 STATE_EDITING_CHAR_PROMPT = 4
 STATE_WAITING_FOR_IMAGE_PROMPT = 5
+STATE_WAITING_FOR_TTS_INPUT = 6
 
 # --- Константы для ключей в context.user_data ---
 # Это внутренние ключи, на которые завязан код.

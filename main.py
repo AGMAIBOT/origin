@@ -261,6 +261,9 @@ async def process_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 # [Dev-Ассистент]: Отменяем индикатор TYPING и включаем UPLOAD_PHOTO
                 indicator_task.cancel()
                 indicator_task = asyncio.create_task(_keep_indicator_alive(context.bot, chat_id, ChatAction.UPLOAD_PHOTO))
+                # [Dev-Ассистент]: НОВАЯ СТРОКА: Уведомление для DALL-E 3
+
+                await context.bot.send_message(chat_id=chat_id, text=f"🎨 Принято! Отправляю запрос в DALL-E 3 (размер: {config.DALL_E_3_PRICING[current_resolution]['display_name']}) время ожидания до 1 минуты...")
 
                 caps = get_ai_client_with_caps(GPT_1, system_instruction="You are an image generation assistant.") # Используем GPT_1 для DALL-E 3
                 image_url, error_message = await caps.client.generate_image(user_content, size=current_resolution) 

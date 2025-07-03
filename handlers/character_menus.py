@@ -12,7 +12,7 @@ from characters import DEFAULT_CHARACTER_NAME, CHARACTER_CATEGORIES, ALL_PROMPTS
 from constants import *
 from utils import get_actual_user_tier
 
-TIER_HIERARCHY = {TIER_FREE: 0, TIER_LITE: 1, TIER_PRO: 2}
+TIER_HIERARCHY = {TIER_FREE: 0, TIER_LITE: 1, TIER_PRO: 2, TIER_GOLD: 3, TIER_VIP: 4}
 
 # [Dev-Ассистент]: ОБНОВЛЕННЫЕ СЛОВАРИ ДЛЯ НОВОЙ КАТЕГОРИИ "AGM Учителя"
 CATEGORY_DESCRIPTIONS = {

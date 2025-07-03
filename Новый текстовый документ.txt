@@ -1,0 +1,216 @@
+main.py: "Мозг" бота.
+Это главный файл, который запускает твоего Telegram-бота. Он слушает входящие сообщения и команды, а затем решает, какой обработчик должен на них отреагировать. Здесь же находится основная логика обработки запросов к AI (отправка текста, фото, файлов), а также важный механизм суммаризации контекста.
+constants.py: "Словарь" проекта.
+Содержит все неизменяемые константы, которые используются в разных частях бота. Это помогает избежать "магических чисел" и опечаток в коде. Здесь определены состояния пользователя (для машины состояний), ключи для хранения данных, идентификаторы тарифных планов и AI-провайдеров.
+config.py: "Настройки" проекта.
+Здесь собраны все основные настройки, которые ты можешь легко менять без глубокого погружения в логику кода: параметры AI-моделей, тарифные планы с их лимитами и доступными AI, цены на генерацию изображений, настройки суммаризации и многое другое.
+database.py: "Хранилище" данных.
+Отвечает за все взаимодействие с базой данных SQLite. Здесь определены структуры таблиц (пользователи, история чатов, транзакции, персонажи) и функции для сохранения, чтения, обновления и удаления данных. Это очень важный модуль, так как он сохраняет всю информацию о пользователях и их диалогах.
+utils.py: "Набор инструментов" для разработки.
+Содержит различные вспомогательные функции, которые используются в разных местах проекта. Это могут быть функции для форматирования текста (Markdown в HTML), работы с файлами, проверки статуса подписки пользователя, подсчета токенов и другие полезные мелочи.
+characters.py: "Каталог" персонажей.
+Этот файл отвечает за загрузку и управление системными (предустановленными) персонажами твоего бота. Он читает описания и промпты персонажей из специальных файлов, распределяет их по категориям и хранит информацию о том, какой тарифный план нужен для доступа к каждому персонажу.
+billing_manager.py: "Финансист" бота.
+Новый модуль, который централизованно управляет расходами пользователей. Он рассчитывает стоимость различных услуг (например, генерация изображений) и списывает средства с баланса пользователя. Также он информирует пользователя, если средств недостаточно.
+Директория handlers/: "Обработчики" команд и действий пользователя.
+Это сердце взаимодействия с пользователем. Каждый файл в этой директории отвечает за обработку определенной группы команд, кнопок или состояний.
+handlers/ai_selection_handler.py: Меню выбора AI-модели (текстовой или для изображений) и управление настройками генерации изображений.
+handlers/captcha_handler.py: Логика верификации новых пользователей через CAPTCHA.
+handlers/characters_handler.py: Главный диспетчер для всех действий, связанных с персонажами (показывает меню, перенаправляет на создание/редактирование).
+handlers/character_actions.py: Конкретные действия с персонажами: выбор, создание, редактирование, удаление, просмотр промпта.
+handlers/character_menus.py: Отображение различных меню персонажей: категории, списки, меню управления.
+handlers/onboarding_handler.py: Пошаговый туториал для новых пользователей, объясняющий основные функции бота.
+handlers/post_processing_handler.py: Кнопки для пост-обработки ответов AI (сократить, раскрыть, перефразировать).
+handlers/profile_handler.py: Меню профиля пользователя: информация о подписке, балансе, реферальной программе и настройках вывода.
+Директория ai_clients/: "Переводчики" для AI-моделей.
+Эти файлы содержат код для взаимодействия с различными внешними AI API (Gemini, OpenAI, DeepSeek, OpenRouter, YandexArt). Каждый файл здесь — это "клиент", который знает, как правильно отправить запрос к конкретной AI-модели и получить от неё ответ.
+ai_clients/base_client.py: Базовый (абстрактный) класс, который определяет, какие методы должны быть у каждого AI-клиента. Это как чертеж.
+ai_clients/factory.py: "Фабрика" по созданию AI-клиентов. Она выбирает нужный клиент (например, Gemini или GPT) в зависимости от настроек пользователя и предоставляет его вместе с информацией о его возможностях (например, умеет ли он работать с изображениями).
+ai_clients/gemini_client.py: Клиент для работы с Google Gemini API.
+ai_clients/gpt_client.py: Клиент для работы с OpenAI API (GPT, DALL-E 3, Whisper).
+ai_clients/deepseek_client.py: Клиент для работы с DeepSeek API.
+ai_clients/openrouter_client.py: Клиент для работы с моделями через OpenRouter API.
+ai_clients/yandexart_client.py: Клиент для работы с YandexArt API для генерации изображений.
+ai_clients/aiutils.py: Вспомогательные функции для клиентов AI, например, для подготовки истории чата в нужном формате.
+Внутренние функции проекта
+Теперь давай пройдемся по каждой функции, которую ты определил в этих файлах, и кратко опишем, что она делает.
+Файл: characters.py
+load_prompts_from_files(): Сканирует папку /prompts, чтобы найти и загрузить все файлы с описаниями персонажей (их системные промпты, описания и тарифы).
+Файл: config.py
+(Этот файл содержит только настройки/константы, функций в нем нет.)
+Файл: constants.py
+(Этот файл содержит только константы, функций в нем нет.)
+Файл: database.py
+_init_db(): Инициализирует (создает) все необходимые таблицы в базе данных SQLite при первом запуске бота.
+db_request(query, params, fetch_one, fetch_all): Выполняет асинхронный SQL-запрос к базе данных, возвращая одну запись, все записи или ID новой записи.
+_get_default_ai_provider_for_tier(tier_name): Возвращает имя AI-модели, которая должна быть по умолчанию для пользователей с определенным тарифом.
+add_or_update_user(telegram_id, full_name, username, referer_id): Добавляет нового пользователя в базу данных или обновляет данные уже существующего, включая реферера.
+get_user_by_id(user_id): Извлекает всю информацию о пользователе по его внутреннему ID из БД.
+get_referrer_for_user(user_id): Находит и возвращает данные пользователя, который пригласил данного пользователя.
+get_and_update_user_usage(user_id, daily_limit): Обновляет счетчик ежедневных запросов пользователя и проверяет, не превышен ли лимит.
+set_user_subscription(telegram_id, tier, duration_days): Устанавливает или изменяет тарифный план пользователя и срок его действия.
+set_user_tier_to_free(user_id): Сбрасывает тариф пользователя на "бесплатный".
+add_transaction(user_id, amount, transaction_type, description, external_id, balance_before, balance_after): Добавляет новую запись о финансовой операции (пополнение, списание) в таблицу транзакций.
+update_user_balance(user_id, amount_change, transaction_type, description, external_id): Изменяет баланс пользователя, записывает транзакцию и при пополнении начисляет комиссию рефереру.
+get_user_referrals(user_id): Возвращает список всех пользователей, которых пригласил данный реферер.
+get_user_referral_earnings(user_id): Подсчитывает общую сумму заработка пользователя по реферальной программе.
+add_message_to_history(user_id, character_name, role, content, token_count, is_summary): Добавляет сообщение в историю чата, сохраняя его роль, текст, количество токенов и пометку, является ли оно резюме.
+get_history_for_context(user_id, character_name, active_buffer_count): Формирует контекст для AI, извлекая последнее резюме и последние сообщения из активного буфера.
+get_messages_for_summarization(user_id, character_name, active_buffer_count): Находит сообщения в истории, которые находятся за пределами активного буфера и готовы к суммаризации.
+get_total_tokens_in_summarizable_history(user_id, character_name, active_buffer_count): Подсчитывает суммарное количество токенов в сообщениях, которые ожидают суммаризации.
+save_summary_and_clean_old_messages(user_id, character_name, summary_text, summary_token_count, old_messages_to_delete_ids): Атомарно (т.е. либо все, либо ничего) сохраняет новое резюме и удаляет старые, уже суммированные сообщения из истории.
+add_character(user_id, name, prompt): Добавляет нового персонажа, созданного пользователем.
+get_user_characters(user_id): Получает список всех персонажей, созданных пользователем.
+get_custom_character_by_name(user_id, name): Находит пользовательского персонажа по его имени.
+update_character(character_id, new_name, new_prompt): Обновляет имя или промпт пользовательского персонажа.
+delete_character(character_id): Удаляет пользовательского персонажа.
+set_current_character(user_id, character_name): Устанавливает выбранного персонажа как текущего для пользователя.
+get_character_by_id(character_id): Находит пользовательского персонажа по его ID.
+get_chat_history(user_id, character_name, limit): Извлекает часть истории чата (для отображения, не для контекста AI).
+clear_chat_history(user_id, character_name): Полностью очищает историю чата для конкретного персонажа.
+get_history_length(user_id, character_name): Возвращает количество сообщений в истории чата.
+get_user_by_telegram_id(telegram_id): Получает информацию о пользователе по его Telegram ID.
+verify_user(telegram_id): Отмечает пользователя как верифицированного.
+set_user_output_format(user_id, output_format): Сохраняет в БД выбранный пользователем формат вывода ответов.
+set_user_default_image_resolution(user_id, provider_type, resolution): Сохраняет в БД выбранное пользователем разрешение по умолчанию для генерации изображений конкретным AI-художником.
+Файл: main.py
+parse_admin_ids(ids_string): Разбирает строку с ID администраторов, разделенных запятыми, в список целых чисел.
+_keep_indicator_alive(bot, chat_id, action): Асинхронная функция, которая в фоновом режиме постоянно отправляет индикатор действия в чат (например, "печатает" или "загружает фото"), чтобы пользователь не думал, что бот завис.
+_keep_typing_indicator_alive(bot, chat_id): Специализированная версия _keep_indicator_alive для индикатора "печатает".
+_perform_summarization(user_id, character_name, active_buffer_count): Фоновая задача, которая запускает процесс суммаризации старой истории диалога и сохраняет новое резюме.
+process_ai_request(update, context, user_data, user_content, is_photo, image_obj, is_document, document_char_count): Центральная функция для обработки любого запроса к AI (текст, фото, документ). Она управляет выбором AI, подготовкой контекста, вызовом AI-клиента и отправкой ответа, а также триггерит суммаризацию.
+start_command(update, context): Обрабатывает команду /start, регистрирует нового пользователя (или обновляет существующего), проверяет верификацию и обрабатывает реферальные ссылки.
+reset_command(update, context, user_data): Обрабатывает команду /reset, очищает историю текущего диалога с персонажем.
+set_subscription_command(update, context): (Для администраторов) Позволяет вручную установить тарифный план для любого пользователя или выполнить тестовое пополнение баланса.
+show_wip_notice(update, context): Отправляет сообщение "Этот раздел в разработке".
+handle_message(update, context, user_data): Основной обработчик для входящих текстовых сообщений, фотографий и прикрепленных текстовых файлов.
+handle_voice_message(update, context, user_data): Обрабатывает входящие голосовые сообщения, преобразует их в текст с помощью Whisper и затем отправляет на обработку AI.
+summarize_command(update, context, user_data): Обрабатывает команду /summarize для одноразовой суммаризации предоставленного текста или файла.
+button_callback_handler(update, context): Единый обработчик для всех нажатий на Inline-кнопки бота, который распределяет их по соответствующим хендлерам.
+post_init(application): Функция, которая выполняется после запуска бота, например, для установки команд бота в меню Telegram.
+main(): Главная функция, которая конфигурирует и запускает Telegram Application, регистрирует все обработчики.
+Файл: utils.py
+markdown_to_html(text): Преобразует текст, написанный в упрощенном Markdown, в HTML-формат, чтобы Telegram мог его отобразить.
+strip_html_tags(text): Удаляет все HTML-теги из строки.
+strip_markdown_for_prompt(text): Удаляет символы Markdown из текста, чтобы его можно было использовать как "чистый" промпт для AI.
+PDF (класс): Кастомный класс для создания PDF-файлов с поддержкой базового HTML.
+__init__(*args, **kwargs): Инициализирует объект PDF, настраивает параметры страницы и загружает шрифты.
+write_html(html_text): Парсит HTML-строку и добавляет ее содержимое в PDF-документ, применяя форматирование.
+create_pdf_from_html(html_text): Создает PDF-документ в байтовом формате из HTML-строки.
+get_main_keyboard(): Возвращает объект ReplyKeyboardMarkup с кнопками главного меню бота.
+delete_message_callback(context): Функция, которая используется для удаления сообщений бота через некоторое время.
+send_long_message(update, context, text, reply_markup, output_format): Отправляет текстовый ответ пользователю, автоматически разбивая его на несколько сообщений, если он слишком длинный, или отправляя как файл (txt/pdf).
+get_actual_user_tier(user_data): Проверяет текущий тариф пользователя и его срок действия, чтобы убедиться, что подписка не истекла.
+require_verification(func): Декоратор, который обертывает другие функции и требует, чтобы пользователь был верифицирован для их выполнения.
+inject_user_data(func): Декоратор, который автоматически загружает данные пользователя из базы данных и передает их в функцию, которую он обертывает.
+get_text_content_from_document(document_file, context): Извлекает текстовое содержимое из прикрепленного текстового файла, проверяет его тип и размер.
+convert_oga_to_mp3_in_memory(oga_bytearray): Конвертирует аудиофайл из формата OGA в MP3 в памяти.
+get_user_ai_provider(user_data): Определяет, какую AI-модель должен использовать пользователь, учитывая его личный выбор и тарифный план.
+set_user_ai_provider(user_id, provider_name): Сохраняет в базе данных выбранную пользователем AI-модель.
+count_gpt_tokens(text, model_name): Подсчитывает количество токенов в заданном тексте для GPT-совместимых моделей.
+Файл: billing_manager.py
+get_item_cost(item_type, item_identifier): Рассчитывает стоимость определенной услуги (например, генерации изображения заданного размера) в AGMcoin.
+perform_deduction(user_id, item_type, item_identifier, update, context): Пытается списать средства с баланса пользователя за услугу. Если средств недостаточно, уведомляет пользователя.
+Файл: profile_handler.py
+show_profile_hub(update, context): Отображает главное меню профиля пользователя с его данными, балансом и текущим тарифом.
+show_wallet_menu(update, context): Отображает меню "Кошелек" с текущим балансом и опциями пополнения/реферальной программы.
+handle_topup_start(update, context): Обработчик для кнопки "Пополнить" (пока заглушка).
+show_referral_program_menu(update, context): Отображает информацию о реферальной программе, включая реферальную ссылку пользователя и его заработок.
+show_settings_menu(update, context): Отображает меню "Настройки" профиля.
+show_format_selection_menu(update, context): Отображает меню для выбора формата вывода ответов AI (текст, TXT, PDF).
+set_output_format(update, context): Устанавливает выбранный пользователем формат вывода ответов AI.
+handle_profile_callbacks(update, context): Диспетчер для всех callback-кнопок, связанных с меню профиля.
+Файл: post_processing_handler.py
+get_post_processing_keyboard(text_length): Формирует Inline-клавиатуру с кнопками "Сократи", "Раскрой", "Перефразируй" в зависимости от длины ответа AI.
+handle_post_processing_callback(update, context): Обрабатывает нажатия на кнопки пост-обработки, формируя новый запрос к AI на основе последнего ответа.
+Файл: onboarding_handler.py
+_get_onboarding_keyboard(page_index): Создает Inline-клавиатуру с кнопками навигации ("Назад", "Дальше", "Завершить") для обучения.
+show_onboarding_page(update, context): Отображает текущую страницу обучающего курса.
+handle_onboarding_callback(update, context): Обрабатывает нажатия кнопок навигации в процессе обучения.
+start_onboarding(update, context): Запускает процесс обучения для пользователя.
+Файл: characters_handler.py
+handle_character_callbacks(update, context): Основной диспетчер для всех callback-кнопок, связанных с персонажами, направляет их в нужные функции.
+handle_stateful_message(update, context): Обрабатывает сообщения пользователя, когда бот находится в ожидании ввода (например, имени или промпта для персонажа).
+Файл: character_menus.py
+clear_temp_state(context): Очищает временные данные, которые использовались при создании или редактировании персонажей.
+get_user_id(update): Вспомогательная функция, возвращающая ID пользователя.
+_build_standard_character_keyboard(user_id, context): Создает клавиатуру для выбора стандартных персонажей, учитывая текущую страницу и тарифный план пользователя.
+_build_paginated_custom_char_keyboard(user_id, custom_chars, context, mode): Создает клавиатуру для просмотра, редактирования или удаления пользовательских персонажей с пагинацией.
+show_character_categories_menu(update, context): Отображает меню с категориями системных персонажей.
+show_standard_characters_menu(update, context, **kwargs): Отображает список стандартных персонажей из выбранной категории.
+show_my_characters_hub_menu(update, context): Отображает главное меню "Мои Персонажи".
+show_paginated_custom_characters_menu(update, context, is_new_message): Отображает список пользовательских персонажей с пагинацией.
+show_manage_characters_menu(update, context): Отображает меню для управления пользовательскими персонажами (добавить, изменить, удалить).
+add_custom_char_start(update, context): Инициирует процесс создания нового персонажа, запрашивая его имя.
+edit_custom_char_start(update, context): Запускает процесс изменения персонажа, показывая список доступных для редактирования персонажей.
+delete_custom_char_start(update, context): Запускает процесс удаления персонажа, показывая список для выбора.
+show_edit_character_menu(message_to_edit, context): Отображает меню для редактирования конкретного персонажа (изменение имени или промпта).
+prompt_for_new_name(update, context): Переводит бота в режим ожидания нового имени для персонажа.
+prompt_for_new_prompt(update, context): Переводит бота в режим ожидания нового промпта для персонажа.
+select_char_to_delete(update, context, **kwargs): Запрашивает подтверждение удаления выбранного персонажа.
+Файл: character_actions.py
+get_user_id(update): Вспомогательная функция, возвращающая ID пользователя.
+show_character_card(update, context, prefix): Отображает подробную карточку персонажа (имя, описание) с кнопкой для его выбора, проверяя доступность по тарифу.
+confirm_character_selection(update, context, prefix): Подтверждает выбор персонажа и устанавливает его как текущего для пользователя.
+handle_show_full_prompt(update, context, prefix): Отправляет полный текст промпта персонажа в виде текстового файла.
+handle_new_char_name_input(update, context): Обрабатывает введенное имя для нового персонажа, проверяя его на уникальность.
+handle_new_char_prompt_input(update, context): Обрабатывает введенный промпт (текст или файл) для нового персонажа и сохраняет его в БД.
+handle_edited_name_input(update, context): Обрабатывает новое имя, введенное пользователем при редактировании персонажа.
+handle_edited_prompt_input(update, context): Обрабатывает новый промпт, введенный пользователем при редактировании персонажа.
+save_character_changes(update, context, **kwargs): Сохраняет все внесенные изменения в персонаже (имя, промпт).
+handle_select_to_edit(update, context, prefix): Подготавливает данные для редактирования выбранного персонажа.
+handle_edit_name(update, context, prefix): Переводит бота в состояние ожидания нового имени персонажа.
+handle_edit_prompt(update, context, prefix): Переводит бота в состояние ожидания нового промпта персонажа.
+handle_cancel_edit(update, context, prefix): Отменяет текущую операцию редактирования персонажа.
+confirm_delete_char(update, context, prefix): Выполняет окончательное удаление персонажа из базы данных.
+Файл: captcha_handler.py
+send_captcha(update, context): Генерирует и отправляет пользователю математическую капчу.
+handle_captcha_callback(update, context): Обрабатывает ответ пользователя на капчу, верифицирует его или предлагает повторить.
+Файл: ai_selection_handler.py
+_get_image_generation_menu_content(): Вспомогательная функция для получения текста и клавиатуры для меню выбора AI-генератора изображений.
+show_ai_mode_selection_hub(update, context): Отображает главное меню, где пользователь может выбрать между текстовыми моделями и генерацией изображений.
+show_text_ai_selection_menu(update, context): Отображает меню для выбора текстовой AI-модели.
+show_image_ai_selection_menu(update, context): Отображает меню для выбора действия с изображениями (создать, редактировать).
+show_image_generation_ai_selection_menu(update, context): Отображает меню для выбора конкретного AI-художника для генерации изображений.
+prompt_for_image_text(update, context): Запрашивает у пользователя текстовое описание для создания изображения и позволяет выбрать разрешение.
+set_ai_provider(telegram_id, provider): Обновляет в базе данных выбранного AI-провайдера для пользователя.
+handle_ai_selection_callback(update, context): Диспетчер для всех callback-кнопок, связанных с выбором AI-моделей, их настроек и генерации изображений.
+Файл: ai_clients/aiutils.py
+prepare_openai_history(system_instruction_content, chat_history, user_prompt): Преобразует историю чата и системную инструкцию в формат, который ожидают OpenAI-совместимые API.
+Файл: ai_clients/base_client.py
+BaseAIClient (класс): Абстрактный базовый класс, определяющий интерфейс для всех AI-клиентов.
+get_text_response(chat_history, user_prompt): Абстрактный метод, который должен быть реализован каждым клиентом для получения текстового ответа.
+get_image_response(chat_history, text_prompt, image): Абстрактный метод, который должен быть реализован для обработки запросов с изображениями.
+Файл: ai_clients/deepseek_client.py
+DeepSeekClient (класс): Реализация BaseAIClient для DeepSeek.
+__init__(api_key, system_instruction, model_name): Инициализирует клиент DeepSeek.
+get_text_response(chat_history, user_prompt): Отправляет текстовый запрос в DeepSeek API и возвращает ответ.
+get_image_response(text_prompt, image): Сообщает, что DeepSeek не поддерживает обработку изображений.
+Файл: ai_clients/factory.py
+AIClientCapabilities (кортеж с именованными полями): Структура данных, которая описывает AI-клиента и его возможности (например, поддерживает ли он изображения, лимит символов для файлов).
+get_ai_client_with_caps(provider_identifier, system_instruction): "Фабрика", которая создает нужный AI-клиент (Gemini, GPT, DeepSeek, OpenRouter) на основе его идентификатора и возвращает его вместе с его возможностями.
+Файл: ai_clients/gemini_client.py
+GeminiClient (класс): Реализация BaseAIClient для Gemini.
+__init__(api_key, system_instruction, model_name, vision_model_name): Инициализирует клиент Gemini с ключами, системным промптом и именами моделей для текста и изображений.
+_create_model(model_name): Внутренний метод для создания экземпляра модели Gemini с заданными настройками безопасности.
+get_text_response(chat_history, user_prompt): Отправляет текстовый запрос в Gemini API и обрабатывает его ответ, включая случаи блокировки по безопасности.
+get_image_response(chat_history, text_prompt, image): Отправляет запрос с изображением и текстом в Gemini Vision API, обрабатывает ответ.
+Файл: ai_clients/gpt_client.py
+_pil_to_base64(image): Вспомогательная функция, которая конвертирует объект изображения (PIL Image) в строку Base64.
+GPTClient (класс): Реализация BaseAIClient для OpenAI GPT.
+__init__(api_key, system_instruction, model_name): Инициализирует клиент OpenAI.
+get_text_response(chat_history, user_prompt): Отправляет текстовый запрос в OpenAI API и получает ответ.
+get_image_response(chat_history, text_prompt, image): Отправляет запрос с изображением и текстом в OpenAI Vision API.
+generate_image(prompt, size): Генерирует изображение с помощью DALL-E 3 API по текстовому описанию и выбранному размеру.
+count_tokens(content, model_name): Подсчитывает количество токенов в тексте для GPT-моделей.
+transcribe_audio(audio_bytes): Отправляет аудиофайл в OpenAI Whisper API для транскрипции речи в текст.
+Файл: ai_clients/openrouter_client.py
+_pil_to_base64(image): Вспомогательная функция, конвертирует изображение в Base64.
+OpenRouterClient (класс): Реализация BaseAIClient для OpenRouter.
+__init__(api_key, system_instruction, model_name): Инициализирует клиент OpenRouter.
+get_text_response(chat_history, user_prompt): Отправляет текстовый запрос через OpenRouter API.
+get_image_response(chat_history, text_prompt, image): Отправляет запрос с изображением и текстом через OpenRouter API.
+Файл: ai_clients/yandexart_client.py
+YandexArtClient (класс): Клиент для YandexArt.
+__init__(folder_id, api_key): Инициализирует клиент YandexArt с ID папки и API-ключом.
+generate_image(prompt, size): Отправляет запрос на генерацию изображения в YandexArt, асинхронно опрашивает статус операции и возвращает сгенерированное изображение.

@@ -28,7 +28,7 @@ ALL_TEXT_MODELS_FOR_SELECTION = [
         "display_name": "GPT-4.1-nano (быстрый, vision)"
     },
     #{
-    #   "provider_id": GEMINI_STANDARD, 
+    #   "provider_id": GEMINI_STANDARD,
     #    "display_name": "Gemini 1.5 Flash (vision)"
     #},
     {
@@ -46,21 +46,21 @@ ALL_TEXT_MODELS_FOR_SELECTION = [
 SUBSCRIPTION_TIERS = {
     'free': {
         "name": "Бесплатный",
-        "daily_limit": 50,
+        "daily_limit": 20,
         "ai_provider": GPT_1,  # Модель по умолчанию для новых пользователей этого тарифа
         "available_providers": [      # Список доступных для выбора моделей
-        GPT_1,
-        OPENROUTER_DEEPSEEK
+            GPT_1,
+            OPENROUTER_DEEPSEEK
         ],
         "can_use_vision": True,
         # [Dev-Ассистент]: НОВЫЕ НАСТРОЙКИ КОНТЕКСТА
-        "active_buffer_message_count": 5, # [Dev-Ассистент]: Количество сообщений в активном буфере
-        "summarization_token_trigger": 3000, # [Dev-Ассистент]: Порог токенов для запуска суммаризации
-        "max_llm_input_tokens": 8000, # [Dev-Ассистент]: Максимальный лимит токенов для LLM-запроса
+        "active_buffer_message_count": 10, # [Dev-Ассистент]: Количество сообщений в активном буфере
+        "summarization_token_trigger": 10000, # [Dev-Ассистент]: Порог токенов для запуска суммаризации
+        "max_llm_input_tokens": 10000, # [Dev-Ассистент]: Максимальный лимит токенов для LLM-запроса
     },
     'lite': {
         "name": "Lite",
-        "daily_limit": 50,
+        "daily_limit": 100,
         "ai_provider": GPT_1, # Модель по умолчанию
         "available_providers": [
             GPT_2,
@@ -69,9 +69,9 @@ SUBSCRIPTION_TIERS = {
         ],
         "can_use_vision": True,
         # [Dev-Ассистент]: НОВЫЕ НАСТРОЙКИ КОНТЕКСТА
-        "active_buffer_message_count": 50, # [Dev-Ассистент]: Количество сообщений в активном буфере
-        "summarization_token_trigger": 25000, # [Dev-Ассистент]: Порог токенов для запуска суммаризации
-        "max_llm_input_tokens": 32000, # [Dev-Ассистент]: Максимальный лимит токенов для LLM-запроса
+        "active_buffer_message_count": 30, # [Dev-Ассистент]: Количество сообщений в активном буфере
+        "summarization_token_trigger": 15000, # [Dev-Ассистент]: Порог токенов для запуска суммаризации
+        "max_llm_input_tokens": 15000, # [Dev-Ассистент]: Максимальный лимит токенов для LLM-запроса
     },
     'pro': {
         "name": "Pro",
@@ -89,7 +89,7 @@ SUBSCRIPTION_TIERS = {
         "max_llm_input_tokens": 100000, # [Dev-Ассистент]: Максимальный лимит токенов для LLM-запроса
     },
     'gold': {
-        "name": "gold",
+        "name": "Gold",
         "daily_limit": None,
         "ai_provider": GPT_1, # Модель по умолчанию
         "available_providers": [      # Pro-пользователям доступны все модели из мастер-списка
@@ -104,7 +104,7 @@ SUBSCRIPTION_TIERS = {
         "max_llm_input_tokens": 100000, # [Dev-Ассистент]: Максимальный лимит токенов для LLM-запроса
     },
     'vip': {
-        "name": "vip",
+        "name": "VIP",
         "daily_limit": None,
         "ai_provider": GPT_1, # Модель по умолчанию
         "available_providers": [      # Pro-пользователям доступны все модели из мастер-списка
